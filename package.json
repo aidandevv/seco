@@ -1,0 +1,35 @@
+{
+  "name": "seco-mcp",
+  "version": "1.0.0",
+  "description": "a local professional identity engine — one intake session, every surface",
+  "bin": {
+    "seco": "packages/mcp-server/dist/index.js"
+  },
+  "workspaces": [
+    "packages/core",
+    "packages/mcp-server",
+    "packages/web-ui"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=packages/core && npm run build --workspace=packages/mcp-server && npm run build --workspace=packages/web-ui",
+    "test": "npm run test --workspaces --if-present",
+    "clean": "rm -rf packages/core/dist packages/mcp-server/dist packages/web-ui/.next"
+  },
+  "files": [
+    "packages/mcp-server/dist",
+    "packages/core/dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aidandevv/seco.git"
+  },
+  "keywords": [
+    "mcp"
+  ],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/aidandevv/seco/issues"
+  },
+  "homepage": "https://github.com/aidandevv/seco#readme"
+}
