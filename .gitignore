@@ -9,3 +9,10 @@ dist/
 .env.local
 .env*.local
 *.tsbuildinfo
+
+# Local AI-agent/operator artifacts
+.claude/
+.playwright-mcp/
+CLAUDE.md
+docs/superpowers/
+superpowers/

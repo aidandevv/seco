@@ -3,7 +3,10 @@ import {
   createIntakeSession,
   appendTranscript,
   getNextQuestion,
+  getIntakeDraft,
+  getIntakeSessionResult,
   saveSession,
+  saveReviewedIntakeSession,
   abandonSession,
   getIntakeSession,
 } from '@seco/core';
@@ -57,6 +60,34 @@ export function registerSessionRoutes(router: Router): void {
     try {
       const experience = await saveSession(req.params['id']!);
       res.json(experience);
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  router.get('/sessions/:id/draft', async (req, res) => {
+    try {
+      const draft = await getIntakeDraft(req.params['id']!);
+      res.json(draft);
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  router.get('/sessions/:id/result', async (req, res) => {
+    try {
+      const result = await getIntakeSessionResult(req.params['id']!);
+      res.json(result);
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  router.post('/sessions/:id/review/save', async (req, res) => {
+    try {
+      const { draft } = req.body as { draft?: unknown };
+      const completed = await saveReviewedIntakeSession(req.params['id']!, draft);
+      res.json(completed);
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }

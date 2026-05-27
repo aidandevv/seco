@@ -2,7 +2,7 @@ export const toolDefinitions = [
   {
     name: 'start_intake_session',
     description:
-      'Begin a new experience intake session. Use voice mode if the user wants to speak; text mode if they want to type.',
+      'Begin a guided experience intake session when the user wants to add or capture an experience. Return the direct intake_url to the user, ask them to complete review/save in the browser, then call get_intake_session_result after they say they are done.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -12,8 +12,24 @@ export const toolDefinitions = [
     },
   },
   {
+    name: 'get_intake_session_result',
+    description:
+      'Poll a guided intake session after the user opens the intake_url. If active, returns draft progress and missing fields. If saved, returns the full experience and summary so you can use it immediately in the current chat task.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string' },
+        refresh: {
+          type: 'boolean',
+          description: 'When true, recompute the draft from the transcript. Default false avoids extra LLM calls while polling.',
+        },
+      },
+      required: ['session_id'],
+    },
+  },
+  {
     name: 'save_experience',
-    description: 'Commit the current intake session to the database. Returns the created experience record.',
+    description: 'Legacy/manual path: commit the current intake session to the database without the browser review flow. Prefer get_intake_session_result for guided UI sessions.',
     inputSchema: {
       type: 'object',
       properties: {

@@ -4,8 +4,57 @@ import { SecoError } from '../errors.js';
 import type { IntakeSession } from '../experience/types.js';
 
 interface SessionState extends IntakeSession {}
+type SessionRow = {
+  id: string;
+  transcript: string;
+  messages: string;
+  status: string;
+  experience_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
 
 const sessions = new Map<string, SessionState>();
+
+export function clearSessionCacheForTests(): void {
+  sessions.clear();
+}
+
+function isSessionStatus(status: string): status is IntakeSession['status'] {
+  return status === 'active' || status === 'saved' || status === 'abandoned';
+}
+
+function parseMessages(value: string): IntakeSession['messages'] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((message): message is { role: 'user' | 'assistant'; content: string } => {
+      if (!message || typeof message !== 'object') return false;
+      const record = message as Record<string, unknown>;
+      return (record['role'] === 'user' || record['role'] === 'assistant') && typeof record['content'] === 'string';
+    });
+  } catch {
+    return [];
+  }
+}
+
+function loadPersistedSession(id: string): SessionState | null {
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM intake_sessions WHERE id = ?').get(id) as SessionRow | undefined;
+  if (!row || !isSessionStatus(row.status)) return null;
+  if (row.status === 'abandoned') return null;
+  const session: SessionState = {
+    id: row.id,
+    transcript: row.transcript,
+    messages: parseMessages(row.messages),
+    status: row.status,
+    experience_id: row.experience_id,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+  sessions.set(session.id, session);
+  return session;
+}
 
 export function createSession(): IntakeSession {
   const now = new Date().toISOString();
@@ -24,7 +73,7 @@ export function createSession(): IntakeSession {
 }
 
 export function getSession(id: string): SessionState {
-  const session = sessions.get(id);
+  const session = sessions.get(id) ?? loadPersistedSession(id);
   if (!session) throw new SecoError('SESSION_NOT_FOUND', id);
   return session;
 }

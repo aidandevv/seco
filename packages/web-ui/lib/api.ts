@@ -22,10 +22,55 @@ export interface Experience {
   version: number;
 }
 
+export type DraftFieldConfidence = 'low' | 'medium' | 'high';
+export type IntakeLifecycle = 'collecting' | 'needs_details' | 'ready_for_review' | 'saved';
+
+export interface ExperienceDraft {
+  title: string;
+  organization: string;
+  role: string;
+  role_type: 'internship' | 'full-time' | 'project' | 'leadership' | 'research';
+  start_date: string;
+  end_date: string | null;
+  situation: string;
+  task: string;
+  action: string;
+  result: string;
+  skills: string[];
+  impact_metrics: string[];
+  ats_keywords: string[];
+  tags: string[];
+  fieldConfidence: Partial<Record<string, DraftFieldConfidence>>;
+  overallConfidence: DraftFieldConfidence;
+  missingFields: string[];
+  readyForReview: boolean;
+}
+
+export interface CompletedIntake {
+  experience: Experience;
+  summary: string;
+}
+
+export interface IntakeSessionResult {
+  session: Session;
+  lifecycle: IntakeLifecycle;
+  draft?: ExperienceDraft;
+  experience?: Experience;
+  summary?: string;
+}
+
 export interface ConfigResponse {
   deepgramKeyAvailable: boolean;
   deepgramKey?: string;
   whisperAvailable: boolean;
+}
+
+function audioFilename(mimeType: string): string {
+  if (mimeType.includes('mp4')) return 'audio.mp4';
+  if (mimeType.includes('mpeg')) return 'audio.mp3';
+  if (mimeType.includes('ogg')) return 'audio.ogg';
+  if (mimeType.includes('wav')) return 'audio.wav';
+  return 'audio.webm';
 }
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
@@ -47,13 +92,18 @@ async function get<T>(path: string): Promise<T> {
 export const api = {
   getConfig: () => get<ConfigResponse>('/config'),
   startSession: (mode: 'voice' | 'text') => post<Session>('/sessions', { mode }),
+  getSession: (id: string) => get<Session>(`/sessions/${id}`),
+  getDraft: (id: string) => get<ExperienceDraft>(`/sessions/${id}/draft`),
+  getSessionResult: (id: string) => get<IntakeSessionResult>(`/sessions/${id}/result`),
   appendTranscript: (id: string, text: string) =>
     post<{ ok: boolean }>(`/sessions/${id}/transcript`, { text }),
   saveSession: (id: string) => post<Experience>(`/sessions/${id}/save`),
+  saveReviewedSession: (id: string, draft: ExperienceDraft) =>
+    post<CompletedIntake>(`/sessions/${id}/review/save`, { draft }),
   abandonSession: (id: string) => post<{ ok: boolean }>(`/sessions/${id}/abandon`),
   transcribeAudio: async (blob: Blob): Promise<string> => {
     const fd = new FormData();
-    fd.append('file', blob, 'audio.webm');
+    fd.append('file', blob, audioFilename(blob.type));
     const res = await fetch(`${BASE}/audio/whisper`, { method: 'POST', body: fd });
     if (!res.ok) throw new Error(`whisper failed: ${res.status}`);
     const data = (await res.json()) as { text: string };

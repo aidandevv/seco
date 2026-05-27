@@ -1,5 +1,5 @@
 import type { WebSocketServer, WebSocket } from 'ws';
-import { appendTranscript, getNextQuestion } from '@seco/core';
+import { appendTranscript, getNextIntakeTurn } from '@seco/core';
 
 type IncomingMessage =
   | { type: 'init'; sessionId: string }
@@ -7,12 +7,25 @@ type IncomingMessage =
 
 async function streamQuestion(ws: WebSocket, sessionId: string): Promise<void> {
   ws.send(JSON.stringify({ type: 'status', status: 'thinking' }));
-  let fullQuestion = '';
-  await getNextQuestion(sessionId, (chunk) => {
-    fullQuestion += chunk;
-    ws.send(JSON.stringify({ type: 'question', text: chunk }));
-  });
-  ws.send(JSON.stringify({ type: 'question_complete', text: fullQuestion }));
+  const turn = await getNextIntakeTurn(sessionId);
+  ws.send(JSON.stringify({
+    type: 'draft_update',
+    draft: turn.draft,
+    lifecycle: turn.lifecycle,
+  }));
+
+  if (turn.complete) {
+    ws.send(JSON.stringify({
+      type: 'review_ready',
+      draft: turn.draft,
+      lifecycle: 'ready_for_review',
+    }));
+    ws.send(JSON.stringify({ type: 'status', status: 'ready_for_review' }));
+    return;
+  }
+
+  ws.send(JSON.stringify({ type: 'question', text: turn.text }));
+  ws.send(JSON.stringify({ type: 'question_complete', text: turn.text }));
   ws.send(JSON.stringify({ type: 'status', status: 'ready' }));
 }
 

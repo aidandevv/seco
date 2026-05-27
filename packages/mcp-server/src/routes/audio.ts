@@ -24,7 +24,9 @@ export function registerAudioRoutes(router: Router): void {
       try {
         const openai = new OpenAI({ apiKey: config.openaiApiKey });
         const readable = Readable.from(req.file.buffer);
-        const file = await OpenAI.toFile(readable, 'audio.webm', { type: 'audio/webm' });
+        const file = await OpenAI.toFile(readable, req.file.originalname || 'audio.webm', {
+          type: req.file.mimetype || 'audio/webm',
+        });
         const transcription = await openai.audio.transcriptions.create({
           file,
           model: 'whisper-1',

@@ -5,23 +5,32 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import express, { Router } from 'express';
+import express from 'express';
 import { createServer } from 'node:http';
-import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { createServer as createNetServer } from 'node:net';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { loadConfig, validateConfig, runFirstTimeSetup } from '@seco/core';
 import { toolDefinitions } from './tools/definitions.js';
 import { handleTool } from './tools/handler.js';
-import { registerSessionRoutes } from './routes/sessions.js';
-import { registerAudioRoutes } from './routes/audio.js';
-import { registerConfigRoutes } from './routes/config-route.js';
 import { registerWsHandlers } from './routes/ws.js';
+import { setRuntimeContext } from './runtime.js';
+import { configureHttpApp } from './http-app.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEV = process.argv.includes('--dev');
+
+function findFreePort(preferred: number): Promise<number> {
+  return new Promise((resolve) => {
+    const srv = createNetServer();
+    srv.listen(preferred, () => {
+      const { port } = srv.address() as { port: number };
+      srv.close(() => resolve(port));
+    });
+    srv.on('error', () => resolve(findFreePort(preferred + 1)));
+  });
+}
 
 async function main(): Promise<void> {
   let config = loadConfig();
@@ -50,66 +59,31 @@ async function main(): Promise<void> {
 
   // Start local Express + WebSocket server
   const app = express();
-  app.use(express.json());
-  if (DEV) {
-    app.use((req, _res, next) => {
-      process.stderr.write(`  ${req.method} ${req.path}\n`);
-      next();
-    });
-  }
-
-  const router = Router();
-  registerSessionRoutes(router);
-  registerAudioRoutes(router);
-  registerConfigRoutes(router);
-  app.use(router);
+  const webUiDist = join(__dirname, '../../web-ui/dist');
+  const { webUiBuilt } = configureHttpApp(app, {
+    dev: DEV,
+    webUiDist,
+    log: (message) => process.stderr.write(message),
+  });
 
   const httpServer = createServer(app);
   const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
   wss.on('error', () => { /* httpServer error handler manages this */ });
   registerWsHandlers(wss);
 
+  const serverPort = await findFreePort(3001);
   await new Promise<void>((resolve, reject) => {
-    httpServer.listen(3001, resolve);
-    httpServer.on('error', (err: NodeJS.ErrnoException) => {
-      if (err.code === 'EADDRINUSE') {
-        process.stderr.write(
-          '\n  Error: port 3001 is already in use.\n  Another seco instance may be running.\n'
-        );
-        process.exit(1);
-      }
-      reject(err);
-    });
+    httpServer.listen(serverPort, resolve);
+    httpServer.on('error', reject);
   });
+  if (serverPort !== 3001) {
+    process.stderr.write(`  Note: port 3001 was in use, using ${serverPort} for seco server\n`);
+  }
 
-  // Launch Next.js web UI as a child process
-  const webUiDir = join(__dirname, '../../web-ui');
-  const nextBin = join(__dirname, '../../../node_modules/.bin/next');
-  const nextBuilt = existsSync(join(webUiDir, '.next'));
-  if (DEV) {
-    const ui = spawn('node', [nextBin, 'dev', '-p', '3000'], {
-      cwd: webUiDir,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: false,
-    });
-    ui.stdout.on('data', (d: Buffer) => process.stderr.write(d));
-    ui.stderr.on('data', (d: Buffer) => process.stderr.write(d));
-    ui.on('error', () => { process.stderr.write('  Warning: could not start web UI\n'); });
-    process.on('exit', () => ui.kill());
-    process.stderr.write('  Voice intake UI (dev): http://localhost:3000\n');
-  } else if (nextBuilt) {
-    const ui = spawn('node', [nextBin, 'start', '-p', '3000'], {
-      cwd: webUiDir,
-      stdio: 'ignore',
-      detached: false,
-    });
-    ui.on('error', () => { process.stderr.write('  Warning: could not start web UI\n'); });
-    process.on('exit', () => ui.kill());
-    process.stderr.write('  Voice intake UI: http://localhost:3000\n');
-  } else {
-    process.stderr.write(
-      '  Voice intake UI: not built — run: npm run build --workspace=packages/web-ui\n'
-    );
+  const uiUrl = `http://localhost:${serverPort}`;
+  setRuntimeContext({ apiPort: serverPort, uiPort: serverPort, uiUrl });
+  if (webUiBuilt) {
+    process.stderr.write(`  Voice intake UI: ${uiUrl}\n`);
   }
 
   process.stderr.write('  seco is running.\n');

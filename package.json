@@ -11,13 +11,23 @@
     "packages/web-ui"
   ],
   "scripts": {
-    "build": "npm run build --workspace=packages/core && npm run build --workspace=packages/mcp-server && npm run build --workspace=packages/web-ui",
+    "build": "npm run build --workspace=packages/core && npm run build --workspace=packages/web-ui && npm run build --workspace=packages/mcp-server",
     "test": "npm run test --workspaces --if-present",
-    "clean": "rm -rf packages/core/dist packages/mcp-server/dist packages/web-ui/.next"
+    "clean": "rm -rf packages/core/dist packages/mcp-server/dist packages/web-ui/dist"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@seco/core": "file:packages/core",
+    "express": "^4.19.0",
+    "multer": "^2.0.0",
+    "openai": "^4.52.0",
+    "ws": "^8.18.0"
   },
   "files": [
     "packages/mcp-server/dist",
-    "packages/core/dist"
+    "packages/core/dist",
+    "packages/core/package.json",
+    "packages/web-ui/dist"
   ],
   "repository": {
     "type": "git",

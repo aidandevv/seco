@@ -1,5 +1,6 @@
 import {
-  startIntakeSession,
+  createIntakeSession,
+  getIntakeSessionResult,
   saveSession,
   listExperiences,
   getExperience,
@@ -11,6 +12,7 @@ import {
   SecoError,
 } from '@seco/core';
 import type { Surface, RoleType } from '@seco/core';
+import { intakeUrl } from '../runtime.js';
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
@@ -30,11 +32,40 @@ export async function handleTool(
     switch (name) {
       case 'start_intake_session': {
         const mode = (args['mode'] as 'voice' | 'text') ?? 'text';
-        const session = await startIntakeSession(mode);
+        const session = createIntakeSession(mode);
+        const url = intakeUrl(session.id);
         return ok({
           session_id: session.id,
-          message: `Session started. ${mode === 'voice' ? 'Open http://localhost:3000 for voice intake.' : 'Session ready for text intake.'}`,
+          status: session.status,
+          intake_url: url,
+          message: `Session started. Ask the user to open ${url}, complete review/save in the guided intake UI, then call get_intake_session_result with this session_id when they are done.`,
           first_question: session.messages[0]?.content ?? '',
+        });
+      }
+
+      case 'get_intake_session_result': {
+        const sessionId = args['session_id'] as string;
+        if (!sessionId) return err('session_id is required');
+        const refreshDraft = args['refresh'] === true;
+        const result = await getIntakeSessionResult(sessionId, { refreshDraft });
+        const url = intakeUrl(sessionId);
+        if (result.session.status === 'saved' && result.experience) {
+          return ok({
+            status: 'saved',
+            session_id: sessionId,
+            intake_url: url,
+            experience_id: result.experience.id,
+            experience: result.experience,
+            summary: result.summary,
+          });
+        }
+        return ok({
+          status: result.session.status,
+          session_id: sessionId,
+          intake_url: url,
+          draft: result.draft,
+          lifecycle: result.lifecycle,
+          missing_fields: result.draft?.missingFields ?? [],
         });
       }
 

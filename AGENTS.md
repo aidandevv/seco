@@ -1,6 +1,6 @@
 # AGENTS.md — seco
 
-Operating instructions for Claude Code and any AI coding agent working in this repository.
+Operating instructions for AI coding agents working in this repository.
 Read this file before touching any code. The rules here are not suggestions.
 
 ---

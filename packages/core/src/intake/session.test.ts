@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 const testDir = join(tmpdir(), `seco-session-test-${Date.now()}`);
 process.env['SECO_DIR'] = testDir;
 
-import { createSession, getSession, appendToTranscript, addAssistantMessage, markSaved, markAbandoned } from './session.js';
+import { createSession, getSession, appendToTranscript, addAssistantMessage, markSaved, markAbandoned, clearSessionCacheForTests } from './session.js';
 import { closeDb } from '../db/client.js';
 import { createExperience } from '../experience/crud.js';
 import { SecoError } from '../errors.js';
@@ -51,6 +51,15 @@ describe('appendToTranscript', () => {
     appendToTranscript(s.id, 'First');
     appendToTranscript(s.id, 'Second');
     expect(getSession(s.id).transcript).toBe('First\nSecond');
+  });
+
+  it('rehydrates a persisted session if memory is empty', () => {
+    const s = createSession();
+    appendToTranscript(s.id, 'Persist me');
+    clearSessionCacheForTests();
+    const rehydrated = getSession(s.id);
+    expect(rehydrated.transcript).toBe('Persist me');
+    expect(rehydrated.messages).toEqual([{ role: 'user', content: 'Persist me' }]);
   });
 });
 

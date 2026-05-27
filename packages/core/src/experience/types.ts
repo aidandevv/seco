@@ -1,4 +1,43 @@
 export type RoleType = 'internship' | 'full-time' | 'project' | 'leadership' | 'research';
+export type DraftFieldConfidence = 'low' | 'medium' | 'high';
+export type IntakeLifecycle = 'collecting' | 'needs_details' | 'ready_for_review' | 'saved';
+
+export type ExperienceDraftField =
+  | 'title'
+  | 'organization'
+  | 'role'
+  | 'role_type'
+  | 'start_date'
+  | 'end_date'
+  | 'situation'
+  | 'task'
+  | 'action'
+  | 'result'
+  | 'skills'
+  | 'impact_metrics'
+  | 'ats_keywords'
+  | 'tags';
+
+export interface ExperienceDraft {
+  title: string;
+  organization: string;
+  role: string;
+  role_type: RoleType;
+  start_date: string;
+  end_date: string | null;
+  situation: string;
+  task: string;
+  action: string;
+  result: string;
+  skills: string[];
+  impact_metrics: string[];
+  ats_keywords: string[];
+  tags: string[];
+  fieldConfidence: Partial<Record<ExperienceDraftField, DraftFieldConfidence>>;
+  overallConfidence: DraftFieldConfidence;
+  missingFields: ExperienceDraftField[];
+  readyForReview: boolean;
+}
 
 export interface Experience {
   id: string;
