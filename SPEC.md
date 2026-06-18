@@ -13,15 +13,16 @@ When in doubt, this file wins over any other document. Keep it current.
 | Language | TypeScript 5, strict | Type safety across monorepo |
 | MCP Server | @modelcontextprotocol/sdk | Official SDK, stdio transport |
 | Local HTTP | Express 4 + ws | Minimal, well-understood, handles WS |
-| Web UI | Next.js 14 + shadcn/ui | Fast to build; Aidan knows it |
-| LLM | Anthropic Claude API (claude-sonnet-4-20250514) | Streaming, tool use, best instruction following |
+| Web UI | Vite React static app | Built once and served by the local Express server |
+| LLM final/rendering | Anthropic Claude API (claude-sonnet-4-20250514) | Streaming, tool use, best instruction following |
+| LLM draft extraction | Anthropic Claude API (claude-haiku-4-5) | Cheap, lightweight structured draft updates after each utterance |
 | STT Primary | Deepgram Streaming WebSocket | True real-time, word-by-word, low latency |
 | STT Fallback | OpenAI Whisper (chunked) | File-based, ~5s chunks, higher latency |
 | DB Default | SQLite via better-sqlite3 | Synchronous, zero dependencies, local-first |
 | DB Optional | Supabase JS client | Cross-device sync, opt-in only |
 | Package Manager | npm workspaces | Monorepo, single node_modules |
 | Test Runner | Vitest | Fast, ESM-native, colocated tests |
-| Distribution | npm (npx seco) | Single command install, no global install needed |
+| Distribution | npm (`npx seco-mcp`) | Single command install, no global install needed |
 
 ---
 
@@ -77,6 +78,8 @@ CREATE TABLE intake_sessions (
   transcript      TEXT NOT NULL DEFAULT '',
   messages        TEXT NOT NULL DEFAULT '[]', -- JSON conversation history
   status          TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','saved','abandoned')),
+  mode            TEXT NOT NULL DEFAULT 'text' CHECK (mode IN ('voice','text')),
+  auto_listen_enabled INTEGER NOT NULL DEFAULT 0,
   experience_id   TEXT REFERENCES experiences(id),
   created_at      TEXT NOT NULL,
   updated_at      TEXT NOT NULL
@@ -91,6 +94,25 @@ CREATE TABLE intake_sessions (
 // packages/core/src/experience/types.ts
 
 export type RoleType = 'internship' | 'full-time' | 'project' | 'leadership' | 'research';
+export type DraftFieldConfidence = 'low' | 'medium' | 'high';
+export type IntakeLifecycle = 'collecting' | 'needs_details' | 'ready_for_review' | 'saved';
+export type IntakeMode = 'voice' | 'text';
+
+export type ExperienceDraftField =
+  | 'title'
+  | 'organization'
+  | 'role'
+  | 'role_type'
+  | 'start_date'
+  | 'end_date'
+  | 'situation'
+  | 'task'
+  | 'action'
+  | 'result'
+  | 'skills'
+  | 'impact_metrics'
+  | 'ats_keywords'
+  | 'tags';
 
 export interface Experience {
   id: string;
@@ -120,6 +142,29 @@ export interface ExperienceVersion {
   version: number;
   snapshot: Experience;
   created_at: string;
+}
+
+export interface ExperienceDraft {
+  title: string;
+  organization: string;
+  role: string;
+  role_type: RoleType;
+  start_date: string;
+  end_date: string | null;
+  situation: string;
+  task: string;
+  action: string;
+  result: string;
+  skills: string[];
+  impact_metrics: string[];
+  ats_keywords: string[];
+  tags: string[];
+  fieldConfidence: Partial<Record<ExperienceDraftField, DraftFieldConfidence>>;
+  fieldNotes?: Partial<Record<ExperienceDraftField, string>>;
+  qualityScore?: { star: number; metrics: number; skills: number; overall: number };
+  overallConfidence: DraftFieldConfidence;
+  missingFields: ExperienceDraftField[];
+  readyForReview: boolean;
 }
 
 export type Surface =
@@ -162,6 +207,8 @@ export interface IntakeSession {
   transcript: string;
   messages: Array<{ role: 'user' | 'assistant'; content: string }>;
   status: 'active' | 'saved' | 'abandoned';
+  mode: IntakeMode;
+  auto_listen_enabled: boolean;
   experience_id: string | null;
   created_at: string;
   updated_at: string;
@@ -177,8 +224,15 @@ The public interface exported from `packages/core/src/index.ts`. MCP tools and w
 ```typescript
 // Intake
 export function startIntakeSession(mode: 'voice' | 'text'): Promise<IntakeSession>
+export function createIntakeSession(mode: IntakeMode, options?: { autoListenEnabled?: boolean }): IntakeSession
+export function setIntakeAutoListen(sessionId: string, enabled: boolean): IntakeSession
 export function appendTranscript(sessionId: string, text: string): Promise<void>
 export function getNextQuestion(sessionId: string): Promise<string>         // streams via callback
+export function updateIntakeDraft(sessionId: string): Promise<ExperienceDraft>
+export function getIntakeDraft(sessionId: string): Promise<ExperienceDraft>
+export function getNextIntakeTurn(sessionId: string): Promise<{ text: string; draft: ExperienceDraft; lifecycle: IntakeLifecycle; complete: boolean }>
+export function saveReviewedIntakeSession(sessionId: string, draft: unknown): Promise<{ experience: Experience; summary: string }>
+export function getIntakeSessionResult(sessionId: string, options?: { refreshDraft?: boolean }): Promise<{ session: IntakeSession; lifecycle: IntakeLifecycle; draft?: ExperienceDraft; experience?: Experience; summary?: string }>
 export function saveSession(sessionId: string): Promise<Experience>
 export function abandonSession(sessionId: string): Promise<void>
 
@@ -222,7 +276,7 @@ export function exportLatex(experienceIds: string[]): Promise<string>
 const tools = [
   {
     name: 'start_intake_session',
-    description: 'Begin a new experience intake session. Use voice mode if the user wants to speak; text mode if they want to type.',
+    description: 'Begin a guided experience intake session when the user wants to add or capture an experience. Return the direct intake_url, ask the user to open it, then call get_intake_session_result after they say they are done.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -232,8 +286,20 @@ const tools = [
     }
   },
   {
+    name: 'get_intake_session_result',
+    description: 'Poll or fetch a guided intake session. If active, returns draft progress and missing fields. If saved, returns the full experience and summary for immediate use in the current chat task.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string' },
+        refresh: { type: 'boolean' }
+      },
+      required: ['session_id']
+    }
+  },
+  {
     name: 'save_experience',
-    description: 'Commit the current intake session to the database. Returns the created experience record.',
+    description: 'Legacy/manual path: commit the current intake session to the database without browser review. Prefer get_intake_session_result for guided UI sessions.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -258,7 +324,7 @@ const tools = [
   },
   {
     name: 'get_experience',
-    description: 'Retrieve a single experience entry with all fields and version history.',
+    description: 'Retrieve a single experience entry with all fields.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -331,28 +397,57 @@ const tools = [
 
 ---
 
-## Voice Pipeline (Step by Step)
+## Guided Intake Flow
 
 ```
-1. User opens localhost:3000 (web UI) and clicks "Start Intake"
-2. Browser calls getUserMedia({ audio: true }) → MediaRecorder captures PCM
-3. Browser opens WebSocket to Deepgram streaming endpoint with DEEPGRAM_API_KEY
-4. Audio chunks sent to Deepgram WS as they arrive
-5. Deepgram returns word-by-word transcript over WS → browser accumulates
-6. Browser forwards completed utterances (on silence detection) to Express WS at localhost:3001
-7. Express calls core: appendTranscript(sessionId, utterance)
-8. Express calls core: getNextQuestion(sessionId) — streams Claude response back via callback
-9. Streamed question sent back to browser over WS → rendered in UI
-10. Loop continues until user says "done" or clicks End Session
-11. Browser calls POST /sessions/:id/save → Express calls core: saveSession(sessionId)
-12. Experience record written to SQLite → returned to browser for confirmation UI
+1. User asks Claude to add/capture an experience.
+2. Claude calls start_intake_session({ mode }) through MCP.
+3. MCP creates an active local session and returns intake_url: http://localhost:<serverPort>/session/<session_id>.
+4. Claude asks the user to open the link.
+5. Browser shows a handoff screen explaining local-only capture, selected mode, review-before-save, and Start intake.
+6. User starts intake. Text sessions focus the input. Voice sessions request microphone only after the explicit start/speak action.
+7. Browser connects to same-origin /ws and sends init.
+8. Express calls core: getNextIntakeTurn(sessionId), which updates the draft and asks for the highest-value missing field.
+9. After each user utterance, Express sends draft_update, then either question_complete or review_ready.
+10. review_ready stops live questioning and opens the review flow; it does not save automatically.
+11. Browser review validates required fields and at least one skill or impact detail.
+12. Browser calls POST /api/sessions/:id/review/save.
+13. Core creates one Experience, marks the session saved, and returns a plain-text summary.
+14. User returns to Claude and says they are done.
+15. Claude calls get_intake_session_result({ session_id }) and uses the returned experience immediately.
+```
+
+## Voice Pipeline
+
+```
+1. Browser calls getUserMedia({ audio: true }) only after explicit user action.
+2. Browser uses MediaRecorder and silence detection to capture one utterance at a time.
+3. If DEEPGRAM_API_KEY exists, browser opens a Deepgram streaming WebSocket and accumulates the transcript.
+4. Browser forwards completed utterances to same-origin Express /ws.
+5. Express appends the utterance to core session transcript/messages and requests the next intake turn.
+6. If auto-listen is enabled, the browser may restart recording after the assistant finishes. Auto-listen is off by default.
 
 Fallback (no Deepgram key):
-- Step 3–5 replaced by: MediaRecorder chunks buffered in 5s segments
-- Each segment posted to Express as audio/webm blob
-- Express calls OpenAI Whisper API → returns transcript string
-- Continues from step 6
+- MediaRecorder chunks are uploaded to the local Express audio route.
+- Express calls OpenAI Whisper when OPENAI_API_KEY is configured.
+- Text input remains available when no voice key is configured.
 ```
+
+## HTTP Routes
+
+The Express server mounts the same handlers at root and under `/api/*` for compatibility.
+
+| Route | Purpose |
+|---|---|
+| `GET /api/health` | API readiness, Deepgram availability, Whisper availability, version |
+| `POST /api/sessions` | Create a text or voice intake session |
+| `GET /api/sessions/:id` | Load session metadata/messages |
+| `GET /api/sessions/:id/draft` | Recompute and return the current draft |
+| `GET /api/sessions/:id/result` | Return active draft state or saved experience summary |
+| `PATCH /api/sessions/:id/preferences` | Update `auto_listen_enabled` |
+| `POST /api/sessions/:id/review/save` | Save an edited reviewed draft |
+| `POST /api/sessions/:id/abandon` | Abandon an active session |
+| `GET /session/:id` | Static SPA route for guided intake |
 
 ---
 
@@ -422,20 +517,20 @@ export function runFirstTimeSetup(): Promise<void>  // Interactive key entry, wr
 ## First Run Flow
 
 ```
-$ npx seco
+$ npx seco-mcp
 
   welcome to seco.
 
   Looks like this is your first time. Let's get your API keys set up.
-  Keys are stored locally at ~/.seco/.env — never uploaded anywhere.
+  Keys are stored locally at ~/.seco/.env - never uploaded anywhere.
 
   Anthropic API key (required):
   > sk-ant-...
 
-  Deepgram API key (optional — needed for real-time voice intake):
+  Deepgram API key (optional - needed for real-time voice intake):
   > (enter to skip)
 
-  OpenAI API key (optional — Whisper fallback for voice):
+  OpenAI API key (optional - Whisper fallback for voice):
   > (enter to skip)
 
   All set. Add this to your Claude Desktop config:
@@ -444,14 +539,14 @@ $ npx seco
     "mcpServers": {
       "seco": {
         "command": "npx",
-        "args": ["seco"]
+        "args": ["seco-mcp"]
       }
     }
   }
 
   Config file location: ~/Library/Application Support/Claude/claude_desktop_config.json
 
-  Voice intake UI: http://localhost:3000
+  Guided intake UI: http://localhost:3001
   seco is running.
 ```
 
@@ -461,10 +556,10 @@ $ npx seco
 
 ```json
 {
-  "name": "seco",
+  "name": "seco-mcp",
   "version": "1.0.0",
   "bin": {
-    "seco": "./packages/mcp-server/dist/index.js"
+    "seco": "packages/mcp-server/dist/index.js"
   },
   "workspaces": [
     "packages/core",

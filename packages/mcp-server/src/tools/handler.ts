@@ -31,15 +31,16 @@ export async function handleTool(
   try {
     switch (name) {
       case 'start_intake_session': {
-        const mode = (args['mode'] as 'voice' | 'text') ?? 'text';
+        const mode = args['mode'] === 'voice' ? 'voice' : 'text';
         const session = createIntakeSession(mode);
         const url = intakeUrl(session.id);
         return ok({
           session_id: session.id,
           status: session.status,
+          mode: session.mode,
           intake_url: url,
+          next_step: 'Open the intake_url to begin the guided intake.',
           message: `Session started. Ask the user to open ${url}, complete review/save in the guided intake UI, then call get_intake_session_result with this session_id when they are done.`,
-          first_question: session.messages[0]?.content ?? '',
         });
       }
 
@@ -53,6 +54,7 @@ export async function handleTool(
           return ok({
             status: 'saved',
             session_id: sessionId,
+            mode: result.session.mode,
             intake_url: url,
             experience_id: result.experience.id,
             experience: result.experience,
@@ -62,6 +64,7 @@ export async function handleTool(
         return ok({
           status: result.session.status,
           session_id: sessionId,
+          mode: result.session.mode,
           intake_url: url,
           draft: result.draft,
           lifecycle: result.lifecycle,

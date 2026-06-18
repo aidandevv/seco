@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { VoiceIntake } from '../components/voice-intake';
 import { api } from '../lib/api';
-import type { ConfigResponse, ExperienceDraft, IntakeSessionResult, Session } from '../lib/api';
+import type { ConfigResponse, ExperienceDraft, HealthResponse, IntakeSessionResult, Session } from '../lib/api';
 import { sessionIdFromPath } from './routes';
 
 type SessionBootstrap =
@@ -11,6 +11,7 @@ type SessionBootstrap =
       status: 'ready';
       session: Session;
       config: ConfigResponse;
+      health: HealthResponse;
       draft: ExperienceDraft | null;
       result: IntakeSessionResult | null;
     };
@@ -35,7 +36,7 @@ function Home(): JSX.Element {
     <main style={{ maxWidth: 640, margin: '0 auto', padding: '60px 24px' }}>
       <h1 style={{ fontSize: 28, fontWeight: 600, marginBottom: 8 }}>seco</h1>
       <p style={{ color: '#888', marginBottom: 48 }}>
-        a local professional identity engine - one intake session, every surface.
+        a local professional identity engine with guided review-before-save intake.
       </p>
 
       <section style={{ marginBottom: 48 }}>
@@ -108,15 +109,16 @@ function SessionPage({ sessionId }: { sessionId: string }): JSX.Element {
 
     const load = async (): Promise<void> => {
       try {
-        const [session, config] = await Promise.all([
+        const [session, config, health] = await Promise.all([
           api.getSession(sessionId),
           api.getConfig(),
+          api.getHealth(),
         ]);
         const saved = session.status === 'saved';
         const [draft, result] = saved
           ? [null, await api.getSessionResult(sessionId)]
           : [await api.getDraft(sessionId), null];
-        if (!cancelled) setBootstrap({ status: 'ready', session, config, draft, result });
+        if (!cancelled) setBootstrap({ status: 'ready', session, config, health, draft, result });
       } catch (e) {
         if (!cancelled) setBootstrap({ status: 'error', message: String(e) });
       }
@@ -141,6 +143,9 @@ function SessionPage({ sessionId }: { sessionId: string }): JSX.Element {
       initialExperienceId={bootstrap.session.experience_id}
       initialSummary={bootstrap.result?.summary ?? ''}
       initialDraft={bootstrap.draft}
+      mode={bootstrap.session.mode}
+      initialAutoListen={bootstrap.session.auto_listen_enabled}
+      health={bootstrap.health}
       deepgramKey={bootstrap.config.deepgramKey}
       whisperAvailable={bootstrap.config.whisperAvailable}
     />

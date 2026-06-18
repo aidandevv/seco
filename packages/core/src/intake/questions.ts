@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { loadConfig } from '../config/keys.js';
 import type { ExperienceDraft } from '../experience/types.js';
+import type { NextDraftQuestionTarget } from './draft.js';
 
 const SYSTEM = `You are a professional experience coach helping someone articulate their work history.
 Ask focused, specific questions to draw out the full STAR story (Situation, Task, Action, Result) behind their experience.
@@ -22,6 +23,7 @@ export function hasCompletionMarker(text: string): boolean {
 export async function generateNextQuestion(
   messages: Array<{ role: 'user' | 'assistant'; content: string }>,
   draft?: ExperienceDraft,
+  target?: NextDraftQuestionTarget | null,
   onChunk?: (chunk: string) => void
 ): Promise<string> {
   const config = loadConfig();
@@ -37,7 +39,7 @@ export async function generateNextQuestion(
   const draftContext = draft
     ? [{
         role: 'user' as const,
-        content: `Current structured draft JSON: ${JSON.stringify(draft)}`,
+        content: `Current structured draft JSON: ${JSON.stringify(draft)}\nHighest-value next target: ${target ? JSON.stringify(target) : 'none'}`,
       }]
     : [];
   const apiMessages = [OPENER, ...draftContext, ...messages];

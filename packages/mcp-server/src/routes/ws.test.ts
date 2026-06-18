@@ -1,12 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type { WebSocket, WebSocketServer } from 'ws';
 import { registerWsHandlers } from './ws.js';
-import { appendTranscript, getNextIntakeTurn } from '@seco/core';
-import type { ExperienceDraft } from '@seco/core';
+import { appendTranscript, getIntakeDraft, getIntakeSession, getNextIntakeTurn } from '@seco/core';
+import type { ExperienceDraft, IntakeSession } from '@seco/core';
 
 vi.mock('@seco/core', () => ({
   appendTranscript: vi.fn().mockResolvedValue(undefined),
+  getIntakeDraft: vi.fn(),
+  getIntakeSession: vi.fn().mockReturnValue({ messages: [] }),
   getNextIntakeTurn: vi.fn(),
 }));
 
@@ -47,6 +49,20 @@ function setupSocket(): FakeSocket {
   return socket;
 }
 
+function sessionWithMessages(messages: IntakeSession['messages']): IntakeSession {
+  return {
+    id: 'sess-1',
+    messages,
+    status: 'active',
+    mode: 'text',
+    auto_listen_enabled: false,
+    transcript: '',
+    experience_id: null,
+    created_at: '2024-01-01T00:00:00Z',
+    updated_at: '2024-01-01T00:00:00Z',
+  };
+}
+
 async function waitForType(socket: FakeSocket, type: string): Promise<void> {
   for (let i = 0; i < 20; i += 1) {
     if (socket.sent.some((message) => message['type'] === type)) return;
@@ -56,6 +72,11 @@ async function waitForType(socket: FakeSocket, type: string): Promise<void> {
 }
 
 describe('registerWsHandlers', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getIntakeSession).mockReturnValue(sessionWithMessages([]));
+  });
+
   it('emits draft_update before the next question', async () => {
     vi.mocked(getNextIntakeTurn).mockResolvedValue({
       text: 'What result did that create?',
@@ -97,5 +118,17 @@ describe('registerWsHandlers', () => {
       'status',
     ]);
     expect(socket.sent.find((message) => message['type'] === 'review_ready')?.['draft']).toEqual(draft);
+  });
+
+  it('does not duplicate an assistant question on reconnect init', async () => {
+    vi.mocked(getIntakeSession).mockReturnValueOnce(sessionWithMessages([{ role: 'assistant', content: 'Existing question?' }]));
+    vi.mocked(getIntakeDraft).mockResolvedValueOnce({ ...draft, readyForReview: false, missingFields: ['result'] });
+    const socket = setupSocket();
+
+    socket.emit('message', JSON.stringify({ type: 'init', sessionId: 'sess-1' }));
+    await waitForType(socket, 'draft_update');
+
+    expect(getNextIntakeTurn).not.toHaveBeenCalled();
+    expect(socket.sent.map((message) => message['type'])).toEqual(['draft_update', 'status']);
   });
 });

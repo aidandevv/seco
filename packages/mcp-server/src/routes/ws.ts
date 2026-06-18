@@ -1,5 +1,5 @@
 import type { WebSocketServer, WebSocket } from 'ws';
-import { appendTranscript, getNextIntakeTurn } from '@seco/core';
+import { appendTranscript, getIntakeDraft, getIntakeSession, getNextIntakeTurn } from '@seco/core';
 
 type IncomingMessage =
   | { type: 'init'; sessionId: string }
@@ -41,6 +41,18 @@ export function registerWsHandlers(wss: WebSocketServer): void {
 
       try {
         if (msg.type === 'init' && msg.sessionId) {
+          const session = getIntakeSession(msg.sessionId);
+          if (session && session.messages.length > 0) {
+            const draft = await getIntakeDraft(msg.sessionId);
+            const lifecycle = draft.readyForReview
+              ? 'ready_for_review'
+              : draft.overallConfidence === 'low'
+                ? 'collecting'
+                : 'needs_details';
+            ws.send(JSON.stringify({ type: 'draft_update', draft, lifecycle }));
+            ws.send(JSON.stringify({ type: 'status', status: 'ready' }));
+            return;
+          }
           await streamQuestion(ws, msg.sessionId);
         } else if (msg.type === 'utterance' && msg.sessionId && msg.text) {
           await appendTranscript(msg.sessionId, msg.text);

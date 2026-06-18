@@ -5,6 +5,8 @@ export interface Session {
   transcript: string;
   messages: Array<{ role: 'user' | 'assistant'; content: string }>;
   status: 'active' | 'saved' | 'abandoned';
+  mode: 'voice' | 'text';
+  auto_listen_enabled: boolean;
   experience_id: string | null;
 }
 
@@ -41,6 +43,8 @@ export interface ExperienceDraft {
   ats_keywords: string[];
   tags: string[];
   fieldConfidence: Partial<Record<string, DraftFieldConfidence>>;
+  fieldNotes?: Partial<Record<string, string>>;
+  qualityScore?: { star: number; metrics: number; skills: number; overall: number };
   overallConfidence: DraftFieldConfidence;
   missingFields: string[];
   readyForReview: boolean;
@@ -62,6 +66,13 @@ export interface IntakeSessionResult {
 export interface ConfigResponse {
   deepgramKeyAvailable: boolean;
   deepgramKey?: string;
+  whisperAvailable: boolean;
+}
+
+export interface HealthResponse {
+  ok: boolean;
+  version: string;
+  deepgramKeyAvailable: boolean;
   whisperAvailable: boolean;
 }
 
@@ -89,7 +100,18 @@ async function get<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${path} failed: ${res.status}`);
+  return res.json() as Promise<T>;
+}
+
 export const api = {
+  getHealth: () => get<HealthResponse>('/health'),
   getConfig: () => get<ConfigResponse>('/config'),
   startSession: (mode: 'voice' | 'text') => post<Session>('/sessions', { mode }),
   getSession: (id: string) => get<Session>(`/sessions/${id}`),
@@ -100,6 +122,8 @@ export const api = {
   saveSession: (id: string) => post<Experience>(`/sessions/${id}/save`),
   saveReviewedSession: (id: string, draft: ExperienceDraft) =>
     post<CompletedIntake>(`/sessions/${id}/review/save`, { draft }),
+  updateSessionPreferences: (id: string, preferences: { auto_listen_enabled: boolean }) =>
+    patch<Session>(`/sessions/${id}/preferences`, preferences),
   abandonSession: (id: string) => post<{ ok: boolean }>(`/sessions/${id}/abandon`),
   transcribeAudio: async (blob: Blob): Promise<string> => {
     const fd = new FormData();

@@ -37,8 +37,9 @@ Return compact JSON only, no markdown. Preserve corrections from the latest user
 Use empty strings or empty arrays for unknown fields. Use null for unknown end_date.
 role_type must be one of: internship, full-time, project, leadership, research.
 fieldConfidence values must be low, medium, or high.
+fieldNotes values should be short plain-text reasons when a field is missing, vague, or corrected.
 Shape:
-{"title":"","organization":"","role":"","role_type":"project","start_date":"","end_date":null,"situation":"","task":"","action":"","result":"","skills":[],"impact_metrics":[],"ats_keywords":[],"tags":[],"fieldConfidence":{}}`;
+{"title":"","organization":"","role":"","role_type":"project","start_date":"","end_date":null,"situation":"","task":"","action":"","result":"","skills":[],"impact_metrics":[],"ats_keywords":[],"tags":[],"fieldConfidence":{},"fieldNotes":{}}`;
 
 const draftCache = new Map<string, ExperienceDraft>();
 
@@ -91,18 +92,79 @@ export function createEmptyExperienceDraft(): ExperienceDraft {
     ats_keywords: [],
     tags: [],
     fieldConfidence,
+    fieldNotes: {},
+    qualityScore: { star: 0, metrics: 0, skills: 0, overall: 0 },
     overallConfidence: 'low',
     missingFields: REQUIRED_FIELDS,
     readyForReview: false,
   };
 }
 
+function qualityScore(draft: Pick<ExperienceDraft, 'situation' | 'task' | 'action' | 'result' | 'impact_metrics' | 'skills' | 'ats_keywords'>): ExperienceDraft['qualityScore'] {
+  const starFields = [draft.situation, draft.task, draft.action, draft.result]
+    .filter((value) => value.trim().length >= 20).length;
+  const star = Math.round((starFields / 4) * 100);
+  const metrics = Math.min(100, draft.impact_metrics.length * 50);
+  const skills = Math.min(100, (draft.skills.length + draft.ats_keywords.length) * 20);
+  return {
+    star,
+    metrics,
+    skills,
+    overall: Math.round((star * 0.55) + (metrics * 0.25) + (skills * 0.20)),
+  };
+}
+
+function defaultFieldNotes(draft: ExperienceDraft): Partial<Record<ExperienceDraftField, string>> {
+  const notes: Partial<Record<ExperienceDraftField, string>> = {};
+  for (const field of REQUIRED_FIELDS) {
+    const value = draft[field];
+    if (typeof value === 'string' && !value.trim()) notes[field] = `${field.replace('_', ' ')} is missing`;
+    else if (draft.fieldConfidence[field] === 'low') notes[field] = `${field.replace('_', ' ')} needs more detail`;
+  }
+  if (draft.impact_metrics.length === 0) notes.impact_metrics = 'Add at least one measurable result or concrete outcome';
+  if (draft.skills.length === 0) notes.skills = 'Add the tools, methods, or skills used';
+  return notes;
+}
+
+export function applyConversationalCorrections(
+  draft: ExperienceDraft,
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>
+): void {
+  const latest = [...messages].reverse().find((message) => message.role === 'user')?.content ?? '';
+  const patterns: Array<[RegExp, ExperienceDraftField, string]> = [
+    [/\b(?:change|set|update)\s+(?:the\s+)?(?:company|organization|org)\s+to\s+(.+?)[.!?]?$/i, 'organization', 'Updated organization'],
+    [/\b(?:change|set|update)\s+(?:the\s+)?title\s+to\s+(.+?)[.!?]?$/i, 'title', 'Updated title'],
+    [/\b(?:change|set|update)\s+(?:the\s+)?role\s+to\s+(.+?)[.!?]?$/i, 'role', 'Updated role'],
+    [/\b(?:change|set|update)\s+(?:the\s+)?start\s+date\s+to\s+(.+?)[.!?]?$/i, 'start_date', 'Updated start date'],
+    [/\b(?:change|set|update)\s+(?:the\s+)?end\s+date\s+to\s+(.+?)[.!?]?$/i, 'end_date', 'Updated end date'],
+  ];
+
+  for (const [pattern, field, note] of patterns) {
+    const match = latest.match(pattern);
+    const value = match?.[1]?.trim();
+    if (!value) continue;
+    if (field === 'title') draft.title = value;
+    else if (field === 'organization') draft.organization = value;
+    else if (field === 'role') draft.role = value;
+    else if (field === 'start_date') draft.start_date = value;
+    else if (field === 'end_date') {
+      draft.end_date = value;
+    }
+    draft.fieldConfidence[field] = 'high';
+    draft.fieldNotes = { ...(draft.fieldNotes ?? {}), [field]: note };
+  }
+}
+
 export function normalizeExperienceDraft(value: unknown): ExperienceDraft {
   const record = asRecord(value);
   const confidenceRecord = asRecord(record['fieldConfidence']);
+  const noteRecord = asRecord(record['fieldNotes']);
   const fieldConfidence: Partial<Record<ExperienceDraftField, DraftFieldConfidence>> = {};
+  const fieldNotes: Partial<Record<ExperienceDraftField, string>> = {};
   for (const field of DRAFT_FIELDS) {
     fieldConfidence[field] = confidenceValue(confidenceRecord[field]);
+    const note = stringValue(noteRecord[field]);
+    if (note) fieldNotes[field] = note;
   }
 
   const draft: ExperienceDraft = {
@@ -121,6 +183,8 @@ export function normalizeExperienceDraft(value: unknown): ExperienceDraft {
     ats_keywords: stringArrayValue(record['ats_keywords']),
     tags: stringArrayValue(record['tags']),
     fieldConfidence,
+    fieldNotes,
+    qualityScore: { star: 0, metrics: 0, skills: 0, overall: 0 },
     overallConfidence: 'low',
     missingFields: [],
     readyForReview: false,
@@ -136,6 +200,8 @@ export function normalizeExperienceDraft(value: unknown): ExperienceDraft {
 
   draft.missingFields = [...new Set(missingFields)];
   draft.readyForReview = draft.missingFields.length === 0;
+  draft.fieldNotes = { ...defaultFieldNotes(draft), ...(draft.fieldNotes ?? {}) };
+  draft.qualityScore = qualityScore(draft);
   draft.overallConfidence = draft.readyForReview
     ? 'high'
     : draft.missingFields.length <= 3
@@ -162,6 +228,45 @@ export function setCachedDraft(sessionId: string, draft: ExperienceDraft): void 
 export function lifecycleForDraft(draft: ExperienceDraft): IntakeLifecycle {
   if (draft.readyForReview) return 'ready_for_review';
   return draft.overallConfidence === 'low' ? 'collecting' : 'needs_details';
+}
+
+export interface NextDraftQuestionTarget {
+  field: ExperienceDraftField;
+  prompt: string;
+}
+
+const TARGET_PROMPTS: Record<ExperienceDraftField, string> = {
+  title: 'What should we call this experience?',
+  organization: 'What organization, team, or context was this for?',
+  role: 'What was your role or responsibility in this experience?',
+  role_type: 'What type of experience was this?',
+  start_date: 'When did this experience start?',
+  end_date: 'When did this experience end, or is it still ongoing?',
+  situation: 'What was the situation or context before your work began?',
+  task: 'What were you responsible for solving or delivering?',
+  action: 'What specific actions did you personally take?',
+  result: 'What changed because of your work?',
+  skills: 'What tools, skills, or methods did you use?',
+  impact_metrics: 'What measurable result, scale, or concrete outcome can we capture?',
+  ats_keywords: 'What keywords should this experience be associated with?',
+  tags: 'What tags would help you find this experience later?',
+};
+
+export function getNextDraftQuestionTarget(draft: ExperienceDraft): NextDraftQuestionTarget | null {
+  const priority: ExperienceDraftField[] = [
+    'title',
+    'organization',
+    'role',
+    'start_date',
+    'situation',
+    'task',
+    'action',
+    'result',
+    'impact_metrics',
+    'skills',
+  ];
+  const field = priority.find((candidate) => draft.missingFields.includes(candidate));
+  return field ? { field, prompt: TARGET_PROMPTS[field] } : null;
 }
 
 export async function extractExperienceDraft(
@@ -196,6 +301,10 @@ export async function extractExperienceDraft(
     const block = response.content[0];
     if (block.type !== 'text') throw new Error('Unexpected non-text draft response');
     const draft = normalizeExperienceDraft(parseJsonObject(block.text));
+    applyConversationalCorrections(draft, messages);
+    draft.missingFields = normalizeExperienceDraft(draft).missingFields;
+    draft.readyForReview = draft.missingFields.length === 0;
+    draft.qualityScore = qualityScore(draft);
     setCachedDraft(sessionId, draft);
     return draft;
   } catch {

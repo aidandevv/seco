@@ -3,7 +3,7 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-// Use env var override — client reads process.env.SECO_DIR lazily inside getDb()
+// Use env var override; the config module reads SECO_DIR lazily inside getDb().
 const testDir = join(tmpdir(), `seco-db-test-${Date.now()}`);
 process.env['SECO_DIR'] = testDir;
 

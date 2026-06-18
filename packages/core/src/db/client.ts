@@ -2,14 +2,10 @@ import Database from 'better-sqlite3';
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { homedir } from 'node:os';
+import { getSecoDir } from '../config/keys.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-
-function getSecoDir(): string {
-  return process.env['SECO_DIR'] ?? join(homedir(), '.seco');
-}
 
 export function getSecoDbPath(): string {
   return join(getSecoDir(), 'seco.db');

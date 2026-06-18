@@ -1,6 +1,7 @@
 export type RoleType = 'internship' | 'full-time' | 'project' | 'leadership' | 'research';
 export type DraftFieldConfidence = 'low' | 'medium' | 'high';
 export type IntakeLifecycle = 'collecting' | 'needs_details' | 'ready_for_review' | 'saved';
+export type IntakeMode = 'voice' | 'text';
 
 export type ExperienceDraftField =
   | 'title'
@@ -34,6 +35,8 @@ export interface ExperienceDraft {
   ats_keywords: string[];
   tags: string[];
   fieldConfidence: Partial<Record<ExperienceDraftField, DraftFieldConfidence>>;
+  fieldNotes?: Partial<Record<ExperienceDraftField, string>>;
+  qualityScore?: { star: number; metrics: number; skills: number; overall: number };
   overallConfidence: DraftFieldConfidence;
   missingFields: ExperienceDraftField[];
   readyForReview: boolean;
@@ -109,6 +112,8 @@ export interface IntakeSession {
   transcript: string;
   messages: Array<{ role: 'user' | 'assistant'; content: string }>;
   status: 'active' | 'saved' | 'abandoned';
+  mode: IntakeMode;
+  auto_listen_enabled: boolean;
   experience_id: string | null;
   created_at: string;
   updated_at: string;

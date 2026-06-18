@@ -8,11 +8,11 @@ Read this file before touching any code. The rules here are not suggestions.
 ## What seco is
 
 seco is a locally-run, open-source professional identity engine. It ingests professional
-experiences via a voice-coached conversational intake flow, stores them in a local SQLite
-database, and renders optimized copy for multiple professional surfaces (resume, LinkedIn,
-GitHub README, Overleaf/LaTeX, cover letters) on demand. It is distributed as an npx-
-installable MCP server that runs locally via Claude Desktop, with an optional localhost
-web UI for the voice intake flow.
+experiences via a guided text or voice intake flow, stores reviewed memories in a local
+SQLite database, and renders optimized copy for multiple professional surfaces (resume,
+LinkedIn, GitHub README, Overleaf/LaTeX, cover letters) on demand. It is distributed as
+an npx-installable MCP server that runs locally via Claude Desktop and serves a localhost
+browser UI for the guided intake flow.
 
 All API keys are user-supplied (BYOK). No data leaves the user's machine except for
 calls to external APIs (Anthropic, Deepgram) using their own keys.
@@ -26,7 +26,7 @@ seco/
 ├── packages/
 │   ├── core/          ← ALL business logic lives here. Transport-agnostic.
 │   ├── mcp-server/    ← Thin stdio MCP wrapper over core. No logic here.
-│   └── web-ui/        ← Next.js localhost UI for voice intake only. No logic here.
+│   └── web-ui/        ← Vite React localhost UI for guided intake only. No logic here.
 ├── AGENTS.md
 ├── SPEC.md
 ├── README.md
@@ -89,7 +89,7 @@ This is the most common contribution. The change is isolated to `core/` only:
 1. Add a new prompt builder file at `packages/core/src/render/prompts/<surface>.ts`
 2. Export a function matching the signature: `buildPrompt(experiences: Experience[], jd?: ParsedJD): string`
 3. Register the surface in `packages/core/src/render/index.ts` — add it to the `Surface` union type and the prompt builder map
-4. The MCP tool `render_for_surface` and the web UI surface selector both pick it up automatically
+4. The MCP tool `render_for_surface` picks it up from the core surface registry
 
 Do not touch `mcp-server/` or `web-ui/` when adding a surface.
 
@@ -101,7 +101,7 @@ Do not touch `mcp-server/` or `web-ui/` when adding a surface.
 - No `any`. Use `unknown` with a type guard if the shape is genuinely unknown.
 - Explicit return types on all exported functions.
 - All async functions must handle errors explicitly — no unhandled promise rejections.
-- Use named exports throughout. No default exports except in Next.js page/layout files where required by the framework.
+- Use named exports throughout. Avoid default exports unless a framework entrypoint requires one.
 
 ---
 
@@ -139,10 +139,14 @@ Do not put business logic in tool files. A tool file should read like: validate 
 
 ## Web UI Rules
 
-The web UI at `packages/web-ui/` is a Next.js app that serves a voice intake interface at `localhost:3000`. It is companion tooling, not the primary interface.
+The web UI at `packages/web-ui/` is a Vite React static app served by the MCP Express server. It is companion tooling for guided intake, not the primary interface.
 
-- It communicates with the core service via a local Express server at `localhost:3001` (defined in `packages/mcp-server/src/index.ts` alongside the MCP server)
-- The voice pipeline: browser `MediaRecorder` → Deepgram WebSocket → Express WS → `core/intake/session.ts`
+- The local Express server serves the static UI, `/api/*` routes, root compatibility routes, `/ws`, and audio upload from one origin.
+- MCP intake links must point directly to `/session/:sessionId` on the actual selected Express port.
+- The browser flow starts with an explicit handoff screen. Do not auto-start the microphone before the user clicks start/speak.
+- Text intake must remain first-class; voice is optional and depends on Deepgram or Whisper configuration.
+- The voice pipeline: browser `MediaRecorder` -> Deepgram WebSocket or Whisper upload -> Express WS/API -> `core/intake/session.ts`
+- High-confidence completion must move to review, not automatic persistence. Memory is committed only by the reviewed save path.
 - No business logic in React components. Components call local API routes; routes call core.
 - No `localStorage` or `sessionStorage`. Session state lives in `core/intake/session.ts`.
 

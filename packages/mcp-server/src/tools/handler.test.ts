@@ -5,6 +5,8 @@ vi.mock('@seco/core', () => ({
     id: 'sess-1',
     messages: [],
     status: 'active',
+    mode: 'text',
+    auto_listen_enabled: false,
     transcript: '',
     experience_id: null,
     created_at: '2024-01-01T00:00:00Z',
@@ -15,6 +17,8 @@ vi.mock('@seco/core', () => ({
       id: 'sess-1',
       messages: [],
       status: 'active',
+      mode: 'text',
+      auto_listen_enabled: false,
       transcript: '',
       experience_id: null,
       created_at: '2024-01-01T00:00:00Z',
@@ -51,21 +55,25 @@ vi.mock('@seco/core', () => ({
 }));
 
 import { handleTool } from './handler.js';
+import { toolDefinitions } from './definitions.js';
 import { setRuntimeContext } from '../runtime.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
-  setRuntimeContext({ apiPort: 3001, uiPort: 3000, uiUrl: 'http://localhost:3000' });
+  setRuntimeContext({ apiPort: 3001, uiPort: 3001, uiUrl: 'http://localhost:3001' });
 });
 
 describe('handleTool', () => {
   it('start_intake_session returns session_id', async () => {
     const result = await handleTool('start_intake_session', { mode: 'text' });
     expect(result.isError).toBeFalsy();
-    const data = JSON.parse(result.content[0].text) as { session_id: string; intake_url: string; status: string };
+    const data = JSON.parse(result.content[0].text) as { session_id: string; intake_url: string; status: string; mode: string; next_step: string };
     expect(data.session_id).toBe('sess-1');
     expect(data.status).toBe('active');
-    expect(data.intake_url).toBe('http://localhost:3000/session/sess-1');
+    expect(data.mode).toBe('text');
+    expect(data.intake_url).toBe('http://localhost:3001/session/sess-1');
+    expect(data.next_step).toBe('Open the intake_url to begin the guided intake.');
+    expect(data).not.toHaveProperty('first_question');
   });
 
   it('start_intake_session uses the dynamic runtime UI URL', async () => {
@@ -73,6 +81,13 @@ describe('handleTool', () => {
     const result = await handleTool('start_intake_session', { mode: 'voice' });
     const data = JSON.parse(result.content[0].text) as { intake_url: string };
     expect(data.intake_url).toBe('http://localhost:3002/session/sess-1');
+  });
+
+  it('start_intake_session defaults omitted mode to text', async () => {
+    const core = await import('@seco/core');
+    const result = await handleTool('start_intake_session', {});
+    expect(result.isError).toBeFalsy();
+    expect(core.createIntakeSession).toHaveBeenCalledWith('text');
   });
 
   it('get_intake_session_result requires session_id', async () => {
@@ -93,7 +108,7 @@ describe('handleTool', () => {
     };
     expect(data.status).toBe('active');
     expect(data.session_id).toBe('sess-1');
-    expect(data.intake_url).toBe('http://localhost:3000/session/sess-1');
+    expect(data.intake_url).toBe('http://localhost:3001/session/sess-1');
     expect(data.lifecycle).toBe('needs_details');
     expect(data.missing_fields).toEqual(['result']);
   });
@@ -105,6 +120,8 @@ describe('handleTool', () => {
         id: 'sess-1',
         messages: [],
         status: 'saved',
+        mode: 'text',
+        auto_listen_enabled: false,
         transcript: '',
         experience_id: 'exp-1',
         created_at: '2024-01-01T00:00:00Z',
@@ -180,5 +197,16 @@ describe('handleTool', () => {
   it('unknown tool returns isError', async () => {
     const result = await handleTool('nonexistent_tool', {});
     expect(result.isError).toBe(true);
+  });
+
+  it('exposes enums for high-value MCP fields', () => {
+    const render = toolDefinitions.find((tool) => tool.name === 'render_for_surface');
+    const update = toolDefinitions.find((tool) => tool.name === 'update_experience');
+    expect(render?.inputSchema.properties.surface).toMatchObject({
+      enum: expect.arrayContaining(['resume_bullets', 'linkedin_summary', 'bio_full']),
+    });
+    expect(update?.inputSchema.properties.field).toMatchObject({
+      enum: expect.arrayContaining(['title', 'organization', 'impact_metrics']),
+    });
   });
 });

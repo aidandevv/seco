@@ -21,14 +21,17 @@ import { configureHttpApp } from './http-app.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEV = process.argv.includes('--dev');
 
-function findFreePort(preferred: number): Promise<number> {
+function findFreePort(preferred: number, maxPort = 65535): Promise<number> {
+  if (preferred > maxPort) {
+    return Promise.reject(new Error(`No available local port found between 3001 and ${maxPort}`));
+  }
   return new Promise((resolve) => {
     const srv = createNetServer();
     srv.listen(preferred, () => {
       const { port } = srv.address() as { port: number };
       srv.close(() => resolve(port));
     });
-    srv.on('error', () => resolve(findFreePort(preferred + 1)));
+    srv.on('error', () => resolve(findFreePort(preferred + 1, maxPort)));
   });
 }
 
@@ -50,7 +53,7 @@ async function main(): Promise<void> {
 
     process.stderr.write('\n  All set. Add this to your Claude Desktop config:\n\n');
     process.stderr.write(
-      '  {\n    "mcpServers": {\n      "seco": {\n        "command": "npx",\n        "args": ["seco"]\n      }\n    }\n  }\n\n'
+      '  {\n    "mcpServers": {\n      "seco": {\n        "command": "npx",\n        "args": ["seco-mcp"]\n      }\n    }\n  }\n\n'
     );
     process.stderr.write(
       '  Config file location: ~/Library/Application Support/Claude/claude_desktop_config.json\n\n'
@@ -83,7 +86,7 @@ async function main(): Promise<void> {
   const uiUrl = `http://localhost:${serverPort}`;
   setRuntimeContext({ apiPort: serverPort, uiPort: serverPort, uiUrl });
   if (webUiBuilt) {
-    process.stderr.write(`  Voice intake UI: ${uiUrl}\n`);
+    process.stderr.write(`  Guided intake UI: ${uiUrl}\n`);
   }
 
   process.stderr.write('  seco is running.\n');

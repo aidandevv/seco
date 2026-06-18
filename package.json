@@ -1,7 +1,7 @@
 {
   "name": "seco-mcp",
   "version": "1.0.0",
-  "description": "a local professional identity engine — one intake session, every surface",
+  "description": "a local professional identity engine with guided review-before-save intake",
   "bin": {
     "seco": "packages/mcp-server/dist/index.js"
   },

@@ -1,14 +1,47 @@
+const surfaces = [
+  'resume_bullets',
+  'linkedin_summary',
+  'linkedin_post',
+  'github_readme',
+  'latex_bullets',
+  'cover_letter_paragraph',
+  'bio_short',
+  'bio_medium',
+  'bio_full',
+] as const;
+
+const editableExperienceFields = [
+  'title',
+  'organization',
+  'role',
+  'role_type',
+  'start_date',
+  'end_date',
+  'raw_transcript',
+  'situation',
+  'task',
+  'action',
+  'result',
+  'skills',
+  'impact_metrics',
+  'ats_keywords',
+  'tags',
+] as const;
+
 export const toolDefinitions = [
   {
     name: 'start_intake_session',
     description:
-      'Begin a guided experience intake session when the user wants to add or capture an experience. Return the direct intake_url to the user, ask them to complete review/save in the browser, then call get_intake_session_result after they say they are done.',
+      'Begin a guided experience intake session when the user wants to add or capture an experience. Return the direct intake_url to the user, ask them to open it and complete review/save in the browser, then call get_intake_session_result after they say they are done.',
     inputSchema: {
       type: 'object',
       properties: {
-        mode: { type: 'string', enum: ['voice', 'text'] },
+        mode: {
+          type: 'string',
+          enum: ['voice', 'text'],
+          description: 'Optional. Defaults to text when omitted.',
+        },
       },
-      required: ['mode'],
     },
   },
   {
@@ -74,7 +107,7 @@ export const toolDefinitions = [
       type: 'object',
       properties: {
         experience_ids: { type: 'array', items: { type: 'string' } },
-        surface: { type: 'string' },
+        surface: { type: 'string', enum: surfaces },
         job_description: { type: 'string' },
       },
       required: ['experience_ids', 'surface'],
@@ -110,7 +143,7 @@ export const toolDefinitions = [
       type: 'object',
       properties: {
         id: { type: 'string' },
-        field: { type: 'string' },
+        field: { type: 'string', enum: editableExperienceFields },
         value: { type: 'string' },
       },
       required: ['id', 'field', 'value'],

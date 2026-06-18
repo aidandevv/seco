@@ -11,7 +11,7 @@ export interface SecoConfig {
   supabaseAnonKey?: string;
 }
 
-function getSecoDir(): string {
+export function getSecoDir(): string {
   return process.env['SECO_DIR'] ?? join(homedir(), '.seco');
 }
 const ENV_PATH = (): string => join(getSecoDir(), '.env');

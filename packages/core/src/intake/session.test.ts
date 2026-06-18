@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 const testDir = join(tmpdir(), `seco-session-test-${Date.now()}`);
 process.env['SECO_DIR'] = testDir;
 
-import { createSession, getSession, appendToTranscript, addAssistantMessage, markSaved, markAbandoned, clearSessionCacheForTests } from './session.js';
+import { createSession, getSession, appendToTranscript, addAssistantMessage, markSaved, markAbandoned, setAutoListenEnabled, clearSessionCacheForTests } from './session.js';
 import { closeDb } from '../db/client.js';
 import { createExperience } from '../experience/crud.js';
 import { SecoError } from '../errors.js';
@@ -32,8 +32,16 @@ describe('createSession', () => {
     const s = createSession();
     expect(s.id).toBeTruthy();
     expect(s.status).toBe('active');
+    expect(s.mode).toBe('text');
+    expect(s.auto_listen_enabled).toBe(false);
     expect(s.transcript).toBe('');
     expect(s.messages).toEqual([]);
+  });
+
+  it('persists voice mode and auto-listen preference', () => {
+    const s = createSession('voice', { autoListenEnabled: true });
+    expect(s.mode).toBe('voice');
+    expect(s.auto_listen_enabled).toBe(true);
   });
 });
 
@@ -60,6 +68,15 @@ describe('appendToTranscript', () => {
     const rehydrated = getSession(s.id);
     expect(rehydrated.transcript).toBe('Persist me');
     expect(rehydrated.messages).toEqual([{ role: 'user', content: 'Persist me' }]);
+  });
+
+  it('rehydrates mode and auto-listen preference', () => {
+    const s = createSession('voice');
+    setAutoListenEnabled(s.id, true);
+    clearSessionCacheForTests();
+    const rehydrated = getSession(s.id);
+    expect(rehydrated.mode).toBe('voice');
+    expect(rehydrated.auto_listen_enabled).toBe(true);
   });
 });
 

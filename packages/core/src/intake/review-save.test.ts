@@ -67,9 +67,23 @@ describe('saveReviewedIntakeSession', () => {
     expect(getIntakeSession(session.id)?.experience_id).toBe(completed.experience.id);
   });
 
+  it('returns the same saved experience for repeated saves', async () => {
+    const session = createIntakeSession('text');
+    await appendTranscript(session.id, 'I led a realtime pipeline migration.');
+    const first = await saveReviewedIntakeSession(session.id, draft);
+    const second = await saveReviewedIntakeSession(session.id, draft);
+    expect(second.experience.id).toBe(first.experience.id);
+  });
+
   it('rejects drafts missing required fields', async () => {
     const session = createIntakeSession('text');
     await expect(saveReviewedIntakeSession(session.id, { ...draft, title: '' }))
+      .rejects.toBeInstanceOf(SecoError);
+  });
+
+  it('rejects drafts missing skills and impact metrics', async () => {
+    const session = createIntakeSession('text');
+    await expect(saveReviewedIntakeSession(session.id, { ...draft, skills: [], impact_metrics: [] }))
       .rejects.toBeInstanceOf(SecoError);
   });
 });

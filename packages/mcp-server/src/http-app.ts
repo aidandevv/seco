@@ -56,7 +56,7 @@ export function configureHttpApp(app: Express, options: HttpAppOptions): HttpApp
       res.sendFile(webUiIndex);
     });
   } else {
-    options.log('  Voice intake UI: not built - run: npm run build --workspace=packages/web-ui\n');
+    options.log('  Guided intake UI: not built - run: npm run build --workspace=packages/web-ui\n');
   }
 
   return { webUiBuilt, webUiIndex };

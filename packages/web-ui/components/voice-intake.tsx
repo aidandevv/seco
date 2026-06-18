@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { api } from '../lib/api';
-import type { ExperienceDraft, IntakeLifecycle } from '../lib/api';
+import type { ExperienceDraft, HealthResponse, IntakeLifecycle } from '../lib/api';
 import { tickVAD, initialVADState, VAD_DEFAULTS } from '../lib/vad';
 import type { VADState } from '../lib/vad';
 
@@ -16,6 +16,9 @@ interface Props {
   initialExperienceId: string | null;
   initialSummary: string;
   initialDraft: unknown;
+  mode: 'voice' | 'text';
+  initialAutoListen: boolean;
+  health: HealthResponse;
   deepgramKey?: string;
   whisperAvailable: boolean;
 }
@@ -81,6 +84,66 @@ function parseArrayText(value: string): string[] {
   return value.split(',').map((item) => item.trim()).filter(Boolean);
 }
 
+const requiredFields: Array<keyof ExperienceDraft> = ['title', 'organization', 'role', 'start_date', 'situation', 'task', 'action', 'result'];
+
+const fieldPrompts: Record<string, string> = {
+  title: 'Title: what should we call this experience?',
+  organization: 'Organization: where did this work happen?',
+  role: 'Role: what were you responsible for?',
+  start_date: 'Start date: when did this begin?',
+  situation: 'Situation: what was the context before your work?',
+  task: 'Task: what were you responsible for delivering?',
+  action: 'Action: what specific work did you do?',
+  result: 'Result: what changed because of your work?',
+  impact_metrics: 'Impact: add a measurable result or concrete outcome.',
+  skills: 'Skills: add the tools, methods, or skills used.',
+};
+
+function missingGuidance(field: string): string {
+  return fieldPrompts[field] ?? `${field.replace('_', ' ')} needs detail.`;
+}
+
+function validateDraft(draft: ExperienceDraft): Partial<Record<string, string>> {
+  const errors: Partial<Record<string, string>> = {};
+  for (const field of requiredFields) {
+    if (!String(draft[field] ?? '').trim()) errors[field] = 'Required before saving.';
+  }
+  if (draft.skills.length === 0 && draft.impact_metrics.length === 0) {
+    errors.impact_metrics = 'Add at least one skill or impact detail.';
+  }
+  return errors;
+}
+
+function confidenceLabel(draft: ExperienceDraft, field: string): string {
+  return draft.fieldConfidence[field] ?? 'low';
+}
+
+function fieldLabel(field: string): string {
+  const labels: Record<string, string> = {
+    title: 'Title',
+    organization: 'Organization',
+    role: 'Role',
+    role_type: 'Role type',
+    start_date: 'Start date',
+    end_date: 'End date',
+    situation: 'Situation',
+    task: 'Task',
+    action: 'Action',
+    result: 'Result',
+    skills: 'Skills',
+    impact_metrics: 'Impact metrics',
+    ats_keywords: 'ATS keywords',
+    tags: 'Tags',
+  };
+  return labels[field] ?? field.replace(/_/g, ' ');
+}
+
+function voiceStatus(health: HealthResponse): string {
+  if (health.deepgramKeyAvailable) return 'Deepgram ready';
+  if (health.whisperAvailable) return 'Whisper fallback ready';
+  return 'Not configured';
+}
+
 export function VoiceIntake({
   sessionId,
   initialMessages,
@@ -88,10 +151,14 @@ export function VoiceIntake({
   initialExperienceId,
   initialSummary,
   initialDraft,
+  mode,
+  initialAutoListen,
+  health,
   deepgramKey,
   whisperAvailable,
 }: Props) {
   const [messages, setMessages] = useState<Message[]>(initialMessages);
+  const [started, setStarted] = useState(initialStatus === 'saved');
   const [recording, setRecording] = useState(false);
   const [status, setStatus] = useState<'idle' | 'thinking' | 'review' | 'saved'>(initialStatus === 'saved' ? 'saved' : 'idle');
   const [textInput, setTextInput] = useState('');
@@ -105,6 +172,13 @@ export function VoiceIntake({
   const [completedExperienceId, setCompletedExperienceId] = useState(initialExperienceId ?? '');
   const [draft, setDraft] = useState<ExperienceDraft>(() => coerceDraft(initialDraft));
   const [lifecycle, setLifecycle] = useState<IntakeLifecycle>(initialStatus === 'saved' ? 'saved' : coerceDraft(initialDraft).readyForReview ? 'ready_for_review' : 'collecting');
+  const [autoListen, setAutoListen] = useState(mode === 'voice' && initialAutoListen);
+  const [voiceActivated, setVoiceActivated] = useState(false);
+  const [connectionAttempt, setConnectionAttempt] = useState(0);
+  const [wsRecoverable, setWsRecoverable] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<Partial<Record<string, string>>>({});
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const deepgramWsRef = useRef<WebSocket | null>(null);
@@ -113,6 +187,11 @@ export function VoiceIntake({
   const chunksRef = useRef<Blob[]>([]);
   const transcriptRef = useRef('');
   const pendingDeepgramChunksRef = useRef<Blob[]>([]);
+  const recentAudioChunksRef = useRef<Array<{ blob: Blob; capturedAt: number }>>([]);
+  const deepgramReconnectAttemptedRef = useRef(false);
+  const usingWhisperFallbackRef = useRef(false);
+  const whisperIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const whisperFlushPromiseRef = useRef<Promise<void> | null>(null);
   const deepgramFinalizeTimerRef = useRef<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -122,6 +201,8 @@ export function VoiceIntake({
   const analyserRef = useRef<AnalyserNode | null>(null);
   const vadRafRef = useRef<number | null>(null);
   const vadStateRef = useRef<VADState>(initialVADState());
+  const textInputRef = useRef<HTMLInputElement>(null);
+  const reconnectAttemptedRef = useRef(false);
 
   // Keep recordingRef in sync so WS closure can check current value
   useEffect(() => { recordingRef.current = recording; }, [recording]);
@@ -140,20 +221,38 @@ export function VoiceIntake({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, currentQuestion]);
 
+  useEffect(() => {
+    if (started && mode === 'text') textInputRef.current?.focus();
+  }, [started, mode]);
+
   // Server WebSocket
   useEffect(() => {
+    if (!started || status === 'saved') return;
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+    let closedByEffect = false;
     serverWsRef.current = ws;
 
     ws.onopen = () => {
       setWsStatus('connected');
+      setWsRecoverable(false);
+      reconnectAttemptedRef.current = false;
       if (messages.length === 0) {
         ws.send(JSON.stringify({ type: 'init', sessionId }));
       }
     };
 
     ws.onerror = () => setWsStatus('error');
+    ws.onclose = () => {
+      if (closedByEffect) return;
+      setWsStatus('error');
+      if (!reconnectAttemptedRef.current) {
+        reconnectAttemptedRef.current = true;
+        window.setTimeout(() => setConnectionAttempt((attempt) => attempt + 1), 800);
+      } else {
+        setWsRecoverable(true);
+      }
+    };
 
     ws.onmessage = (event) => {
       const msg = JSON.parse(event.data as string) as {
@@ -173,7 +272,7 @@ export function VoiceIntake({
         setMessages((prev) => [...prev, { role: 'assistant', content: msg.text ?? '' }]);
         setCurrentQuestion('');
         // After AI finishes: chime + auto-start mic
-        if ((deepgramKey || whisperAvailable) && status !== 'review') {
+        if (mode === 'voice' && autoListen && (deepgramKey || whisperAvailable) && status !== 'review') {
           setTimeout(() => {
             if (recordingRef.current) return;
             const ctx = audioCtxRef.current;
@@ -198,84 +297,186 @@ export function VoiceIntake({
       }
     };
 
-    return () => ws.close();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => {
+      closedByEffect = true;
+      ws.close();
+    };
+  }, [started, connectionAttempt, autoListen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sendUtterance = useCallback((text: string) => {
     setMessages((prev) => [...prev, { role: 'user', content: text }]);
     serverWsRef.current?.send(JSON.stringify({ type: 'utterance', sessionId, text }));
   }, [sessionId]);
 
+  const rememberRecentAudioChunk = useCallback((blob: Blob) => {
+    const capturedAt = Date.now();
+    recentAudioChunksRef.current.push({ blob, capturedAt });
+    recentAudioChunksRef.current = recentAudioChunksRef.current.filter(
+      (chunk) => capturedAt - chunk.capturedAt <= 5000
+    );
+  }, []);
+
+  const flushWhisperChunks = useCallback(async () => {
+    if (whisperFlushPromiseRef.current) {
+      await whisperFlushPromiseRef.current.catch(() => undefined);
+    }
+    if (chunksRef.current.length === 0) return;
+    const chunks = chunksRef.current.splice(0);
+    const type = mediaRecorderRef.current?.mimeType || chunks[0]?.type || 'audio/webm';
+    const flushPromise = (async () => {
+      const text = await api.transcribeAudio(new Blob(chunks, { type }));
+      if (text) {
+        transcriptRef.current += `${text} `;
+        setLiveTranscript(transcriptRef.current);
+      }
+    })();
+    whisperFlushPromiseRef.current = flushPromise;
+    try {
+      await flushPromise;
+    } catch {
+      // Whisper is a fallback path; keep the live session usable with text if a chunk fails.
+    } finally {
+      if (whisperFlushPromiseRef.current === flushPromise) {
+        whisperFlushPromiseRef.current = null;
+      }
+    }
+  }, []);
+
+  const startWhisperFallback = useCallback((seedChunks: Blob[] = []): boolean => {
+    if (!whisperAvailable) return false;
+    usingWhisperFallbackRef.current = true;
+    setDgStatus('off');
+    setErrorMsg(null);
+    chunksRef.current.push(...seedChunks.filter((chunk) => chunk.size > 0));
+    if (!whisperIntervalRef.current) {
+      whisperIntervalRef.current = setInterval(() => {
+        void flushWhisperChunks();
+      }, 5500);
+    }
+    return true;
+  }, [flushWhisperChunks, whisperAvailable]);
+
   const startRecording = useCallback(async () => {
     if (recordingRef.current) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      setVoiceActivated(true);
       mediaStreamRef.current = stream;
       const mr = new MediaRecorder(stream, getRecorderOptions());
       mediaRecorderRef.current = mr;
       chunksRef.current = [];
       pendingDeepgramChunksRef.current = [];
+      recentAudioChunksRef.current = [];
+      deepgramReconnectAttemptedRef.current = false;
+      usingWhisperFallbackRef.current = false;
+      if (whisperIntervalRef.current) {
+        clearInterval(whisperIntervalRef.current);
+        whisperIntervalRef.current = null;
+      }
       transcriptRef.current = '';
       setLiveTranscript('');
       setVoicePhase('recording');
       setErrorMsg(null);
 
       if (deepgramKey) {
+        const activeDeepgramKey = deepgramKey;
         setDgStatus('connecting');
-        const dgWs = new WebSocket(
-          `wss://api.deepgram.com/v1/listen?model=nova-2&punctuate=true&interim_results=true`,
-          ['token', deepgramKey]
-        );
-        deepgramWsRef.current = dgWs;
-        dgWs.onopen = () => {
-          setDgStatus('active');
-          for (const chunk of pendingDeepgramChunksRef.current.splice(0)) {
-            dgWs.send(chunk);
-          }
-        };
-        dgWs.onerror = () => {
-          setDgStatus('error');
-          setErrorMsg('Deepgram connection failed');
-        };
-        dgWs.onclose = (event) => {
-          if (recordingRef.current && event.code !== 1000) {
-            setDgStatus('error');
-            setErrorMsg(`Deepgram closed unexpectedly (${event.code})`);
-          }
-        };
         let finalTranscript = '';
-        dgWs.onmessage = (e) => {
-          const data = JSON.parse(e.data as string) as {
-            type?: string;
-            channel?: { alternatives?: Array<{ transcript: string }> };
-            is_final?: boolean;
-            message?: string;
-          };
-          if (data.type === 'Error') {
-            setDgStatus('error');
-            setErrorMsg(data.message ?? 'Deepgram transcription error');
+
+        const detachDeepgramHandlers = (socket: WebSocket | null) => {
+          if (!socket) return;
+          socket.onopen = null;
+          socket.onerror = null;
+          socket.onclose = null;
+          socket.onmessage = null;
+        };
+
+        const recoverDeepgram = () => {
+          if (!recordingRef.current || usingWhisperFallbackRef.current) return;
+
+          const replayChunks = recentAudioChunksRef.current.map((chunk) => chunk.blob);
+          if (!deepgramReconnectAttemptedRef.current) {
+            deepgramReconnectAttemptedRef.current = true;
+            pendingDeepgramChunksRef.current = [...replayChunks, ...pendingDeepgramChunksRef.current];
+            const failedSocket = deepgramWsRef.current;
+            detachDeepgramHandlers(failedSocket);
+            try { failedSocket?.close(); } catch {}
+            setDgStatus('connecting');
+            window.setTimeout(() => connectDeepgram(), 250);
             return;
           }
-          const t = data.channel?.alternatives?.[0]?.transcript ?? '';
-          if (data.is_final && t) {
-            finalTranscript += t + ' ';
-            setLiveTranscript(finalTranscript);
-          } else if (!data.is_final && t) {
-            setLiveTranscript(finalTranscript + t);
+
+          const fallbackStarted = startWhisperFallback(replayChunks);
+          const failedSocket = deepgramWsRef.current;
+          detachDeepgramHandlers(failedSocket);
+          try { failedSocket?.close(); } catch {}
+          if (!fallbackStarted) {
+            setDgStatus('error');
+            setErrorMsg('Voice transcription paused. Continue with text input.');
           }
-          transcriptRef.current = finalTranscript;
         };
+
+        function connectDeepgram(): void {
+          const dgWs = new WebSocket(
+            'wss://api.deepgram.com/v1/listen?model=nova-2&punctuate=true&interim_results=true',
+            ['token', activeDeepgramKey]
+          );
+          deepgramWsRef.current = dgWs;
+          dgWs.onopen = () => {
+            setDgStatus('active');
+            for (const chunk of pendingDeepgramChunksRef.current.splice(0)) {
+              dgWs.send(chunk);
+            }
+          };
+          dgWs.onerror = () => recoverDeepgram();
+          dgWs.onclose = (event) => {
+            if (recordingRef.current && event.code !== 1000) recoverDeepgram();
+          };
+          dgWs.onmessage = (e) => {
+            const data = JSON.parse(e.data as string) as {
+              type?: string;
+              channel?: { alternatives?: Array<{ transcript: string }> };
+              is_final?: boolean;
+            };
+            if (data.type === 'Error') {
+              recoverDeepgram();
+              return;
+            }
+            const t = data.channel?.alternatives?.[0]?.transcript ?? '';
+            if (data.is_final && t) {
+              finalTranscript += `${t} `;
+              setLiveTranscript(finalTranscript);
+            } else if (!data.is_final && t) {
+              setLiveTranscript(finalTranscript + t);
+            }
+            transcriptRef.current = finalTranscript;
+          };
+        }
+
+        connectDeepgram();
+
         mr.ondataavailable = (e) => {
           if (e.data.size === 0) return;
-          if (dgWs.readyState === WebSocket.OPEN) {
+          rememberRecentAudioChunk(e.data);
+          if (usingWhisperFallbackRef.current) {
+            chunksRef.current.push(e.data);
+            return;
+          }
+          const dgWs = deepgramWsRef.current;
+          if (dgWs?.readyState === WebSocket.OPEN) {
             dgWs.send(e.data);
-          } else if (dgWs.readyState === WebSocket.CONNECTING) {
+          } else if (dgWs?.readyState === WebSocket.CONNECTING) {
             pendingDeepgramChunksRef.current.push(e.data);
           }
         };
         mr.onstop = () => {
           stream.getTracks().forEach((track) => track.stop());
-          if (dgWs.readyState === WebSocket.OPEN) {
+          if (usingWhisperFallbackRef.current) {
+            void flushWhisperChunks();
+            return;
+          }
+          const dgWs = deepgramWsRef.current;
+          if (dgWs?.readyState === WebSocket.OPEN) {
             dgWs.send(JSON.stringify({ type: 'Finalize' }));
             deepgramFinalizeTimerRef.current = window.setTimeout(() => {
               if (dgWs.readyState === WebSocket.OPEN) dgWs.close(1000);
@@ -284,23 +485,13 @@ export function VoiceIntake({
         };
         mr.start(100);
       } else if (whisperAvailable) {
-        let chunkInterval: ReturnType<typeof setInterval>;
-        mr.ondataavailable = (e) => chunksRef.current.push(e.data);
+        startWhisperFallback();
+        mr.ondataavailable = (e) => {
+          if (e.data.size > 0) chunksRef.current.push(e.data);
+        };
         mr.start(5000);
-        chunkInterval = setInterval(async () => {
-          if (chunksRef.current.length === 0) return;
-          const chunks = chunksRef.current.splice(0);
-          const blob = new Blob(chunks, { type: mr.mimeType || chunks[0]?.type || 'audio/webm' });
-          try {
-            const text = await api.transcribeAudio(blob);
-            if (text) {
-              transcriptRef.current += text + ' ';
-              setLiveTranscript(transcriptRef.current);
-            }
-          } catch {}
-        }, 5500);
         mr.onstop = () => {
-          clearInterval(chunkInterval);
+          void flushWhisperChunks();
           stream.getTracks().forEach((track) => track.stop());
         };
       } else {
@@ -335,11 +526,10 @@ export function VoiceIntake({
         vadRafRef.current = requestAnimationFrame(loop);
       }
     } catch {
-      // mic permission denied or unavailable
       setErrorMsg('Microphone permission denied or unavailable');
       setVoicePhase('idle');
     }
-  }, [deepgramKey, whisperAvailable, getAudioCtx]);
+  }, [deepgramKey, whisperAvailable, getAudioCtx, flushWhisperChunks, rememberRecentAudioChunk, startWhisperFallback]);
 
   useEffect(() => { startRecordingRef.current = startRecording; }, [startRecording]);
 
@@ -357,28 +547,39 @@ export function VoiceIntake({
     } else {
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     }
-    if (deepgramKey) setDgStatus('ready');
+    if (deepgramKey && !usingWhisperFallbackRef.current) setDgStatus('ready');
     setVoicePhase('processing');
-    const submitDelayMs = deepgramKey ? 2000 : 500;
+    if (whisperIntervalRef.current) {
+      clearInterval(whisperIntervalRef.current);
+      whisperIntervalRef.current = null;
+    }
+    const submitDelayMs = usingWhisperFallbackRef.current ? 1200 : deepgramKey ? 2000 : 500;
     setTimeout(() => {
-      const text = transcriptRef.current.trim();
-      if (deepgramFinalizeTimerRef.current !== null) {
-        window.clearTimeout(deepgramFinalizeTimerRef.current);
-        deepgramFinalizeTimerRef.current = null;
-      }
-      if (deepgramWsRef.current?.readyState === WebSocket.OPEN) {
-        deepgramWsRef.current.close(1000);
-      }
-      if (text) {
-        sendUtterance(text);
-        setVoicePhase('sent');
-        setTimeout(() => { setVoicePhase('idle'); setLiveTranscript(''); }, 2000);
-      } else {
-        setVoicePhase('idle');
-        setLiveTranscript('');
-      }
-      transcriptRef.current = '';
-      pendingDeepgramChunksRef.current = [];
+      void (async () => {
+        if (usingWhisperFallbackRef.current && whisperFlushPromiseRef.current) {
+          await whisperFlushPromiseRef.current.catch(() => undefined);
+        }
+        const text = transcriptRef.current.trim();
+        if (deepgramFinalizeTimerRef.current !== null) {
+          window.clearTimeout(deepgramFinalizeTimerRef.current);
+          deepgramFinalizeTimerRef.current = null;
+        }
+        if (deepgramWsRef.current?.readyState === WebSocket.OPEN) {
+          deepgramWsRef.current.close(1000);
+        }
+        if (text) {
+          sendUtterance(text);
+          setVoicePhase('sent');
+          setTimeout(() => { setVoicePhase('idle'); setLiveTranscript(''); }, 2000);
+        } else {
+          setVoicePhase('idle');
+          setLiveTranscript('');
+        }
+        transcriptRef.current = '';
+        pendingDeepgramChunksRef.current = [];
+        recentAudioChunksRef.current = [];
+        usingWhisperFallbackRef.current = false;
+      })();
     }, submitDelayMs);
     setRecording(false);
   }, [deepgramKey, sendUtterance]);
@@ -397,7 +598,12 @@ export function VoiceIntake({
   };
 
   const saveReviewed = async () => {
-    setStatus('thinking');
+    const errors = validateDraft(draft);
+    setValidationErrors(errors);
+    setSaveError(null);
+    if (Object.keys(errors).length > 0) return;
+
+    setSaving(true);
     try {
       const completed = await api.saveReviewedSession(sessionId, draft);
       setCompletionSummary(completed.summary);
@@ -406,12 +612,19 @@ export function VoiceIntake({
       setStatus('saved');
     } catch (e) {
       setStatus('review');
-      alert(String(e));
+      setSaveError(String(e));
+    } finally {
+      setSaving(false);
     }
   };
 
   const updateDraft = <K extends keyof ExperienceDraft>(field: K, value: ExperienceDraft[K]) => {
     setDraft((prev) => ({ ...prev, [field]: value }));
+    setValidationErrors((prev) => {
+      const next = { ...prev };
+      delete next[String(field)];
+      return next;
+    });
   };
 
   // Init AudioContext on first explicit user click so chimes work later
@@ -424,30 +637,120 @@ export function VoiceIntake({
     }
   };
 
+  const handleAutoListenToggle = async (enabled: boolean) => {
+    setAutoListen(enabled);
+    try {
+      await api.updateSessionPreferences(sessionId, { auto_listen_enabled: enabled });
+    } catch (e) {
+      setAutoListen(!enabled);
+      setErrorMsg(String(e));
+    }
+  };
+
+  const discardSession = async () => {
+    if (!window.confirm('Discard this intake session? The saved experience will not be created.')) return;
+    try {
+      await api.abandonSession(sessionId);
+      window.location.assign('/');
+    } catch (e) {
+      setErrorMsg(String(e));
+    }
+  };
+
+  if (!started) {
+    const voiceReady = mode === 'voice' && (deepgramKey || whisperAvailable);
+      const hasExistingSession = initialMessages.length > 0;
+      return (
+        <main style={{ maxWidth: 680, margin: '0 auto', padding: '56px 24px' }}>
+        <p style={{ fontSize: 12, color: '#666', marginBottom: 8 }}>Guided intake</p>
+        <h1 style={{ fontSize: 26, lineHeight: 1.2, margin: '0 0 12px' }}>
+          {hasExistingSession ? 'Resume intake session' : mode === 'voice' ? 'Start a voice intake' : 'Start a text intake'}
+        </h1>
+        <p style={{ color: '#aaa', marginBottom: 24 }}>
+          This local session captures one professional experience. Nothing is saved to memory until you review and confirm the structured fields.
+        </p>
+        <div style={{ border: '1px solid #2a2a2a', borderRadius: 8, padding: 16, background: '#111', marginBottom: 18 }}>
+          <div style={{ color: '#ddd', marginBottom: 8 }}>What happens next</div>
+          <div style={{ color: '#888', fontSize: 13, lineHeight: 1.7 }}>
+            Capture the story, clarify missing details, review the draft, then save it locally. After saving, return to Claude and say you are done.
+          </div>
+        </div>
+        {mode === 'voice' && !voiceReady && (
+          <div style={{ border: '1px solid #5c3b1a', background: '#1a1308', color: '#d1a45f', borderRadius: 8, padding: 12, marginBottom: 18 }}>
+            No voice transcription key is available. You can continue with text in this session.
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => {
+              setStarted(true);
+              if (mode === 'voice' && voiceReady && !hasExistingSession) {
+                window.setTimeout(() => void startRecordingRef.current?.(), 200);
+              }
+            }}
+            style={{ background: '#1a6b3a', color: '#e8e8e8', border: '1px solid #2d8f52' }}
+          >
+            {hasExistingSession ? 'Resume session' : mode === 'voice' && voiceReady ? 'Start speaking' : 'Start intake'}
+          </button>
+          <a href="/" style={{ color: '#777', fontSize: 13 }}>Back</a>
+        </div>
+        <p style={{ color: '#555', marginTop: 18, fontSize: 12 }}>
+          API: {health.ok ? 'Ready' : 'Unavailable'} | Transcription: {voiceStatus(health)}
+        </p>
+      </main>
+    );
+  }
+
   if (status === 'review') {
+    const inputStyle = (field: string) => ({
+      background: '#111',
+      color: '#eee',
+      border: `1px solid ${validationErrors[field] ? '#8f3d3d' : '#333'}`,
+      borderRadius: 6,
+      padding: 8,
+    });
+    const textAreaStyle = (field: string) => ({
+      background: '#111',
+      color: '#eee',
+      border: `1px solid ${validationErrors[field] ? '#8f3d3d' : '#333'}`,
+      borderRadius: 6,
+      padding: 10,
+      resize: 'vertical' as const,
+    });
+    const FieldMeta = ({ field }: { field: string }) => (
+      <span style={{ color: validationErrors[field] ? '#d77' : '#666', fontSize: 11 }}>
+        {validationErrors[field] ?? draft.fieldNotes?.[field] ?? `${confidenceLabel(draft, field)} confidence`}
+      </span>
+    );
     return (
       <div style={{ maxWidth: 840, margin: '0 auto', padding: 32 }}>
         <div style={{ marginBottom: 24 }}>
-          <p style={{ fontSize: 20, marginBottom: 6 }}>review experience</p>
-          <p style={{ color: '#888', margin: 0 }}>Confirm the captured memory before saving it locally.</p>
+          <p style={{ fontSize: 20, marginBottom: 6 }}>Review experience</p>
+          <p style={{ color: '#888', margin: 0 }}>Confirm the captured memory before saving it locally. Required fields must be complete before saving.</p>
         </div>
 
+        <section style={{ border: '1px solid #242424', borderRadius: 8, padding: 16, marginBottom: 18 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+            <h2 style={{ fontSize: 15, margin: 0 }}>Identity</h2>
+            <span style={{ color: '#777', fontSize: 12 }}>{draft.qualityScore?.overall ?? 0}/100 quality</span>
+          </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6, color: '#aaa', fontSize: 12 }}>
-            title
-            <input value={draft.title} onChange={(e) => updateDraft('title', e.target.value)} style={{ background: '#111', color: '#eee', border: '1px solid #333', borderRadius: 6, padding: 8 }} />
+            {fieldLabel('title')} <FieldMeta field="title" />
+            <input value={draft.title} onChange={(e) => updateDraft('title', e.target.value)} style={inputStyle('title')} />
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6, color: '#aaa', fontSize: 12 }}>
-            organization
-            <input value={draft.organization} onChange={(e) => updateDraft('organization', e.target.value)} style={{ background: '#111', color: '#eee', border: '1px solid #333', borderRadius: 6, padding: 8 }} />
+            {fieldLabel('organization')} <FieldMeta field="organization" />
+            <input value={draft.organization} onChange={(e) => updateDraft('organization', e.target.value)} style={inputStyle('organization')} />
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6, color: '#aaa', fontSize: 12 }}>
-            role
-            <input value={draft.role} onChange={(e) => updateDraft('role', e.target.value)} style={{ background: '#111', color: '#eee', border: '1px solid #333', borderRadius: 6, padding: 8 }} />
+            {fieldLabel('role')} <FieldMeta field="role" />
+            <input value={draft.role} onChange={(e) => updateDraft('role', e.target.value)} style={inputStyle('role')} />
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6, color: '#aaa', fontSize: 12 }}>
-            role type
-            <select value={draft.role_type} onChange={(e) => updateDraft('role_type', e.target.value as ExperienceDraft['role_type'])} style={{ background: '#111', color: '#eee', border: '1px solid #333', borderRadius: 6, padding: 8 }}>
+            {fieldLabel('role_type')}
+            <select value={draft.role_type} onChange={(e) => updateDraft('role_type', e.target.value as ExperienceDraft['role_type'])} style={inputStyle('role_type')}>
               <option value="project">project</option>
               <option value="full-time">full-time</option>
               <option value="internship">internship</option>
@@ -456,35 +759,58 @@ export function VoiceIntake({
             </select>
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6, color: '#aaa', fontSize: 12 }}>
-            start date
-            <input value={draft.start_date} onChange={(e) => updateDraft('start_date', e.target.value)} style={{ background: '#111', color: '#eee', border: '1px solid #333', borderRadius: 6, padding: 8 }} />
+            {fieldLabel('start_date')} <FieldMeta field="start_date" />
+            <input value={draft.start_date} onChange={(e) => updateDraft('start_date', e.target.value)} style={inputStyle('start_date')} />
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6, color: '#aaa', fontSize: 12 }}>
-            end date
-            <input value={draft.end_date ?? ''} onChange={(e) => updateDraft('end_date', e.target.value.trim() || null)} style={{ background: '#111', color: '#eee', border: '1px solid #333', borderRadius: 6, padding: 8 }} />
+            {fieldLabel('end_date')}
+            <input value={draft.end_date ?? ''} onChange={(e) => updateDraft('end_date', e.target.value.trim() || null)} style={inputStyle('end_date')} />
           </label>
         </div>
+        </section>
 
+        <section style={{ border: '1px solid #242424', borderRadius: 8, padding: 16, marginBottom: 18 }}>
+        <h2 style={{ fontSize: 15, margin: '0 0 12px' }}>STAR story</h2>
         {(['situation', 'task', 'action', 'result'] as const).map((field) => (
           <label key={field} style={{ display: 'flex', flexDirection: 'column', gap: 6, color: '#aaa', fontSize: 12, marginTop: 14 }}>
-            {field}
-            <textarea value={draft[field]} onChange={(e) => updateDraft(field, e.target.value)} rows={field === 'action' ? 5 : 3} style={{ background: '#111', color: '#eee', border: '1px solid #333', borderRadius: 6, padding: 10, resize: 'vertical' }} />
+            {fieldLabel(field)} <FieldMeta field={field} />
+            <textarea value={draft[field]} onChange={(e) => updateDraft(field, e.target.value)} rows={field === 'action' ? 5 : 3} style={textAreaStyle(field)} />
           </label>
         ))}
+        </section>
 
-        {(['skills', 'impact_metrics', 'ats_keywords', 'tags'] as const).map((field) => (
+        <section style={{ border: '1px solid #242424', borderRadius: 8, padding: 16 }}>
+        <h2 style={{ fontSize: 15, margin: '0 0 12px' }}>Value signals</h2>
+        {(['skills', 'impact_metrics'] as const).map((field) => (
           <label key={field} style={{ display: 'flex', flexDirection: 'column', gap: 6, color: '#aaa', fontSize: 12, marginTop: 14 }}>
-            {field.replace('_', ' ')}
-            <textarea value={arrayText(draft[field])} onChange={(e) => updateDraft(field, parseArrayText(e.target.value))} rows={2} style={{ background: '#111', color: '#eee', border: '1px solid #333', borderRadius: 6, padding: 10, resize: 'vertical' }} />
+            {fieldLabel(field)} <FieldMeta field={field} />
+            <textarea value={arrayText(draft[field])} onChange={(e) => updateDraft(field, parseArrayText(e.target.value))} rows={2} style={textAreaStyle(field)} />
           </label>
         ))}
+        </section>
+
+        <section style={{ border: '1px solid #242424', borderRadius: 8, padding: 16, marginTop: 18 }}>
+        <h2 style={{ fontSize: 15, margin: '0 0 12px' }}>Tags and keywords</h2>
+        {(['ats_keywords', 'tags'] as const).map((field) => (
+          <label key={field} style={{ display: 'flex', flexDirection: 'column', gap: 6, color: '#aaa', fontSize: 12, marginTop: 14 }}>
+            {fieldLabel(field)}
+            <textarea value={arrayText(draft[field])} onChange={(e) => updateDraft(field, parseArrayText(e.target.value))} rows={2} style={textAreaStyle(field)} />
+          </label>
+        ))}
+        </section>
+
+        {saveError && (
+          <div style={{ color: '#d77', background: '#1c0f0f', border: '1px solid #5c2222', borderRadius: 8, padding: 12, marginTop: 18 }}>
+            {saveError}
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 24 }}>
           <button onClick={() => setStatus('idle')} style={{ background: '#181818', color: '#ddd', border: '1px solid #333' }}>
-            back to chat
+            Back to chat
           </button>
-          <button onClick={() => void saveReviewed()} style={{ background: '#1a6b3a', color: '#e8e8e8', border: '1px solid #2d8f52' }}>
-            save memory
+          <button disabled={saving} onClick={() => void saveReviewed()} style={{ background: '#1a6b3a', color: '#e8e8e8', border: '1px solid #2d8f52' }}>
+            {saving ? 'Saving...' : 'Save memory'}
           </button>
         </div>
       </div>
@@ -494,7 +820,7 @@ export function VoiceIntake({
   if (status === 'saved') {
     return (
       <div style={{ textAlign: 'center', padding: 48 }}>
-        <p style={{ fontSize: 20, marginBottom: 8 }}>experience saved</p>
+        <p style={{ fontSize: 20, marginBottom: 8 }}>Experience saved</p>
         {completedExperienceId && (
           <p style={{ color: '#888', fontFamily: 'monospace', fontSize: 13, marginBottom: 20 }}>
             {completedExperienceId}
@@ -517,7 +843,7 @@ export function VoiceIntake({
           </div>
         )}
         <p style={{ color: '#888' }}>Memory saved. Tell Claude you are done so it can fetch this experience and use it in chat.</p>
-        <a href="/" style={{ display: 'inline-block', marginTop: 24, color: '#aaa' }}>← back</a>
+        <a href="/" style={{ display: 'inline-block', marginTop: 24, color: '#aaa' }}>← Back</a>
       </div>
     );
   }
@@ -552,6 +878,8 @@ export function VoiceIntake({
   const missingLabels = draft.missingFields.map((field) => field.replace('_', ' '));
   const capturedCount = ['title', 'organization', 'role', 'situation', 'task', 'action', 'result']
     .filter((field) => String(draft[field as keyof ExperienceDraft] ?? '').trim()).length;
+  const step = lifecycle === 'ready_for_review' ? 'Review' : capturedCount >= 4 ? 'Clarify' : 'Capture';
+  const voiceAvailable = mode === 'voice' && (deepgramKey || whisperAvailable);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', maxWidth: 980, margin: '0 auto', padding: '0 24px' }}>
@@ -559,15 +887,21 @@ export function VoiceIntake({
       {/* Header */}
       <div style={{ padding: '14px 0 10px', borderBottom: '1px solid #222' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <span style={{ fontSize: 13, color: '#666' }}>intake session</span>
+          <span style={{ fontSize: 13, color: '#666' }}>Intake session</span>
           <div style={{ display: 'flex', gap: 8 }}>
-            <a href="/" style={{ fontSize: 13, color: '#666', textDecoration: 'none' }}>← back</a>
+            <a href="/" style={{ fontSize: 13, color: '#666', textDecoration: 'none' }}>← Back</a>
+            <button
+              onClick={() => void discardSession()}
+              style={{ background: '#181818', color: '#aaa', fontSize: 13, border: '1px solid #333' }}
+            >
+              Discard
+            </button>
             <button
               onClick={handleReview}
               disabled={!draft.readyForReview || status === 'thinking'}
               style={{ background: '#1a6b3a', color: '#e8e8e8', fontSize: 13 }}
             >
-              review
+              Review
             </button>
           </div>
         </div>
@@ -577,8 +911,16 @@ export function VoiceIntake({
           <span>
             {dot(userStateColor, recording || status === 'thinking')} {userState}
           </span>
+          <span>Step: {step}</span>
           <span>{capturedCount}/7 core details captured</span>
           <span>{draft.overallConfidence} confidence</span>
+        </div>
+        <div style={{ display: 'flex', gap: 8, fontSize: 11, color: '#666', marginTop: 6 }}>
+          {['Capture', 'Clarify', 'Review', 'Saved'].map((item) => (
+            <span key={item} style={{ color: item === step ? '#ddd' : '#555' }}>
+              {item}
+            </span>
+          ))}
         </div>
         {errorMsg && (
           <div style={{ marginTop: 6, fontSize: 11, color: '#c0392b', fontFamily: 'monospace', wordBreak: 'break-all' }}>
@@ -589,20 +931,22 @@ export function VoiceIntake({
 
       <div style={{ display: 'flex', gap: 16, flex: 1, minHeight: 0, overflow: 'hidden', flexWrap: 'wrap', alignContent: 'stretch' }}>
         <aside style={{ flex: '0 1 280px', minWidth: 240, borderRight: '1px solid #222', padding: '16px 16px 16px 0', overflowY: 'auto' }}>
-          <div style={{ fontSize: 12, color: '#666', marginBottom: 10 }}>captured draft</div>
+          <div style={{ fontSize: 12, color: '#666', marginBottom: 10 }}>Captured draft</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: 13 }}>
+            <div style={{ color: '#777', fontSize: 11, textTransform: 'uppercase' }}>Identity</div>
             <div>
-              <div style={{ color: '#666', fontSize: 11 }}>title</div>
+              <div style={{ color: '#666', fontSize: 11 }}>Title</div>
               <div style={{ color: draft.title ? '#ddd' : '#555' }}>{draft.title || 'missing'}</div>
             </div>
             <div>
-              <div style={{ color: '#666', fontSize: 11 }}>organization</div>
+              <div style={{ color: '#666', fontSize: 11 }}>Organization</div>
               <div style={{ color: draft.organization ? '#ddd' : '#555' }}>{draft.organization || 'missing'}</div>
             </div>
             <div>
-              <div style={{ color: '#666', fontSize: 11 }}>role</div>
+              <div style={{ color: '#666', fontSize: 11 }}>Role</div>
               <div style={{ color: draft.role ? '#ddd' : '#555' }}>{draft.role || 'missing'}</div>
             </div>
+            <div style={{ color: '#777', fontSize: 11, textTransform: 'uppercase', marginTop: 6 }}>Story</div>
             <div>
               <div style={{ color: '#666', fontSize: 11 }}>STAR progress</div>
               <div style={{ color: '#ddd' }}>
@@ -610,13 +954,21 @@ export function VoiceIntake({
               </div>
             </div>
             <div>
-              <div style={{ color: '#666', fontSize: 11 }}>skills</div>
+              <div style={{ color: '#777', fontSize: 11, textTransform: 'uppercase', margin: '6px 0' }}>Value</div>
+              <div style={{ color: '#666', fontSize: 11 }}>Skills</div>
               <div style={{ color: draft.skills.length ? '#ddd' : '#555' }}>{draft.skills.length ? draft.skills.slice(0, 4).join(', ') : 'missing'}</div>
             </div>
             <div>
-              <div style={{ color: '#666', fontSize: 11 }}>still needed</div>
+              <div style={{ color: '#777', fontSize: 11, textTransform: 'uppercase', margin: '6px 0' }}>Confidence</div>
+              <div style={{ color: '#666', fontSize: 11 }}>Still needed</div>
               <div style={{ color: missingLabels.length ? '#c9a44d' : '#3db85a' }}>
-                {missingLabels.length ? missingLabels.slice(0, 5).join(', ') : 'ready to review'}
+                {draft.missingFields.length ? draft.missingFields.slice(0, 5).map(missingGuidance).join(' ') : 'Ready to review'}
+              </div>
+            </div>
+            <div>
+              <div style={{ color: '#666', fontSize: 11 }}>Quality</div>
+              <div style={{ color: '#ddd' }}>
+                STAR {draft.qualityScore?.star ?? 0} | Metrics {draft.qualityScore?.metrics ?? 0} | Skills {draft.qualityScore?.skills ?? 0}
               </div>
             </div>
           </div>
@@ -654,7 +1006,19 @@ export function VoiceIntake({
 
       {/* Input bar */}
       <div style={{ padding: '10px 0 20px', borderTop: '1px solid #222' }}>
-        {(deepgramKey || whisperAvailable) && (
+        {wsRecoverable && (
+          <div style={{ marginBottom: 8, color: '#d1a45f', fontSize: 12 }}>
+            Connection paused. Your transcript is still local. <button onClick={() => setConnectionAttempt((attempt) => attempt + 1)} style={{ marginLeft: 8, padding: '4px 8px', background: '#2a2112', color: '#d1a45f', border: '1px solid #5c3b1a' }}>Reconnect</button>
+          </div>
+        )}
+
+        {mode === 'voice' && !voiceAvailable && (
+          <div style={{ marginBottom: 8, color: '#d1a45f', fontSize: 12 }}>
+            Voice transcription is not configured. Text input is safe to use.
+          </div>
+        )}
+
+        {voiceAvailable && (
           <div style={{ marginBottom: 8 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: voicePhase !== 'idle' ? 8 : 0 }}>
               <button
@@ -684,6 +1048,16 @@ export function VoiceIntake({
               {voicePhase === 'sent' && (
                 <span style={{ fontSize: 13, color: '#3db85a', fontWeight: 600 }}>✓ sent</span>
               )}
+              {voiceActivated && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#777', fontSize: 12 }}>
+                  <input
+                    type="checkbox"
+                    checked={autoListen}
+                    onChange={(event) => void handleAutoListenToggle(event.target.checked)}
+                  />
+                  auto-listen
+                </label>
+              )}
             </div>
             {voicePhase !== 'idle' && (
               <div style={{
@@ -699,15 +1073,15 @@ export function VoiceIntake({
                 {voicePhase === 'recording' && (
                   liveTranscript
                     ? <span style={{ color: '#ccc' }}>{liveTranscript}<span style={{ opacity: 0.4 }}>▊</span></span>
-                    : <span style={{ color: '#444' }}>listening…</span>
+                    : <span style={{ color: '#444' }}>Listening…</span>
                 )}
                 {voicePhase === 'processing' && (
-                  <span style={{ color: '#666' }}>{liveTranscript || 'processing…'}</span>
+                  <span style={{ color: '#666' }}>{liveTranscript || 'Processing…'}</span>
                 )}
                 {voicePhase === 'sent' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     {liveTranscript && <span style={{ color: '#ccc' }}>{liveTranscript}</span>}
-                    <span style={{ color: '#4caf50', fontSize: 12 }}>✓ submitted</span>
+                    <span style={{ color: '#4caf50', fontSize: 12 }}>Submitted</span>
                   </div>
                 )}
               </div>
@@ -717,10 +1091,11 @@ export function VoiceIntake({
 
         <div style={{ display: 'flex', gap: 8 }}>
           <input
+            ref={textInputRef}
             value={textInput}
             onChange={(e) => setTextInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendText(); } }}
-            placeholder={recording ? 'transcribing — stop when done' : 'or type…'}
+            placeholder={recording ? 'Transcribing - stop when done' : 'Type a reply...'}
             disabled={status === 'thinking'}
             style={{
               flex: 1,
@@ -738,7 +1113,7 @@ export function VoiceIntake({
             disabled={!textInput.trim() || status === 'thinking'}
             style={{ background: '#1e3a5f', color: '#e8e8e8', borderRadius: 6 }}
           >
-            send
+            Send
           </button>
         </div>
       </div>

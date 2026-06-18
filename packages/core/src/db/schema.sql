@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS intake_sessions (
   transcript      TEXT NOT NULL DEFAULT '',
   messages        TEXT NOT NULL DEFAULT '[]',
   status          TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','saved','abandoned')),
+  mode            TEXT NOT NULL DEFAULT 'text' CHECK (mode IN ('voice','text')),
+  auto_listen_enabled INTEGER NOT NULL DEFAULT 0,
   experience_id   TEXT REFERENCES experiences(id),
   created_at      TEXT NOT NULL,
   updated_at      TEXT NOT NULL
