@@ -1,0 +1,214 @@
+:root {
+  color-scheme: light dark;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  background: var(--color-background-primary, Canvas);
+  color: var(--color-text-primary, CanvasText);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--color-background-primary, Canvas);
+  color: var(--color-text-primary, CanvasText);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.seco-app {
+  width: 100%;
+  min-width: 0;
+  background: var(--color-background-primary, Canvas);
+  color: var(--color-text-primary, CanvasText);
+  font-size: var(--font-text-sm-size, 14px);
+  line-height: var(--font-text-sm-line-height, 1.4);
+}
+
+.seco-card {
+  padding: 16px;
+  border: var(--border-width-regular, 1px) solid var(--color-border-secondary, rgba(127, 127, 127, 0.35));
+  border-radius: var(--border-radius-md, 8px);
+  background: var(--color-background-primary, Canvas);
+}
+
+.seco-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.seco-title {
+  margin: 0;
+  font-size: var(--font-heading-md-size, 16px);
+  line-height: var(--font-heading-md-line-height, 1.3);
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+.seco-muted {
+  color: var(--color-text-secondary, GrayText);
+}
+
+.seco-caption {
+  font-size: var(--font-text-xs-size, 12px);
+  line-height: var(--font-text-xs-line-height, 1.4);
+}
+
+.seco-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 8px;
+  border-radius: var(--border-radius-full, 9999px);
+  border: var(--border-width-regular, 1px) solid var(--color-border-secondary, rgba(127, 127, 127, 0.35));
+  color: var(--color-text-secondary, GrayText);
+  white-space: nowrap;
+}
+
+.seco-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.seco-metric {
+  min-width: 0;
+  padding: 10px;
+  border-radius: var(--border-radius-sm, 6px);
+  background: var(--color-background-secondary, rgba(127, 127, 127, 0.08));
+}
+
+.seco-metric__value {
+  font-weight: var(--font-weight-semibold, 600);
+  font-size: var(--font-heading-md-size, 16px);
+}
+
+.seco-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.seco-button {
+  min-height: 36px;
+  padding: 7px 12px;
+  border-radius: var(--border-radius-sm, 6px);
+  border: var(--border-width-regular, 1px) solid var(--color-border-primary, currentColor);
+  background: var(--color-background-primary, ButtonFace);
+  color: var(--color-text-primary, ButtonText);
+  cursor: pointer;
+}
+
+.seco-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.seco-button--primary {
+  background: var(--color-background-inverse, ButtonText);
+  color: var(--color-text-inverse, ButtonFace);
+  border-color: var(--color-border-inverse, currentColor);
+}
+
+.seco-alert {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: var(--border-radius-sm, 6px);
+  border: var(--border-width-regular, 1px) solid var(--color-border-warning, currentColor);
+  color: var(--color-text-warning, CanvasText);
+  background: var(--color-background-warning, transparent);
+}
+
+.seco-review {
+  min-height: 100vh;
+  padding: 18px;
+  background: var(--color-background-primary, Canvas);
+}
+
+.seco-review__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.seco-section {
+  padding: 14px;
+  margin-bottom: 12px;
+  border: var(--border-width-regular, 1px) solid var(--color-border-secondary, rgba(127, 127, 127, 0.35));
+  border-radius: var(--border-radius-md, 8px);
+}
+
+.seco-section h2 {
+  margin: 0 0 12px;
+  font-size: var(--font-heading-sm-size, 14px);
+}
+
+.seco-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+
+.seco-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.seco-field label,
+.seco-field__label {
+  color: var(--color-text-secondary, GrayText);
+  font-size: var(--font-text-xs-size, 12px);
+}
+
+.seco-field input,
+.seco-field select,
+.seco-field textarea {
+  width: 100%;
+  min-width: 0;
+  border-radius: var(--border-radius-sm, 6px);
+  border: var(--border-width-regular, 1px) solid var(--color-border-primary, rgba(127, 127, 127, 0.45));
+  background: var(--color-background-primary, Field);
+  color: var(--color-text-primary, FieldText);
+  padding: 8px 9px;
+}
+
+.seco-field textarea {
+  resize: vertical;
+}
+
+.seco-error {
+  color: var(--color-text-danger, #a33);
+  font-size: var(--font-text-xs-size, 12px);
+}
+
+@media (max-width: 520px) {
+  .seco-card__header,
+  .seco-review__header,
+  .seco-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .seco-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .seco-button {
+    width: 100%;
+    min-height: 44px;
+  }
+}

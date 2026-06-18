@@ -3,6 +3,7 @@ import { streamRender } from './stream.js';
 import { resumeBuilder } from './prompts/resume.js';
 import { linkedinSummaryBuilder, linkedinPostBuilder } from './prompts/linkedin.js';
 import { readmeBuilder } from './prompts/readme.js';
+import { obsidianBuilder } from './prompts/obsidian.js';
 import { latexBuilder } from './prompts/latex.js';
 import { coverBuilder } from './prompts/cover.js';
 import { bioShortBuilder, bioMediumBuilder, bioFullBuilder } from './prompts/bio.js';
@@ -18,6 +19,7 @@ const builders: Record<Surface, PromptBuilder> = {
   linkedin_summary: linkedinSummaryBuilder,
   linkedin_post: linkedinPostBuilder,
   github_readme: readmeBuilder,
+  obsidian_note: obsidianBuilder,
   latex_bullets: latexBuilder,
   cover_letter_paragraph: coverBuilder,
   bio_short: bioShortBuilder,

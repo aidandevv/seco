@@ -672,7 +672,7 @@ export function VoiceIntake({
         <div style={{ border: '1px solid #2a2a2a', borderRadius: 8, padding: 16, background: '#111', marginBottom: 18 }}>
           <div style={{ color: '#ddd', marginBottom: 8 }}>What happens next</div>
           <div style={{ color: '#888', fontSize: 13, lineHeight: 1.7 }}>
-            Capture the story, clarify missing details, review the draft, then save it locally. After saving, return to Claude and say you are done.
+            Capture the story, clarify missing details, review the draft, then save it locally. After saving, Claude can fetch the saved memory from this session.
           </div>
         </div>
         {mode === 'voice' && !voiceReady && (
@@ -842,7 +842,7 @@ export function VoiceIntake({
             {completionSummary}
           </div>
         )}
-        <p style={{ color: '#888' }}>Memory saved. Tell Claude you are done so it can fetch this experience and use it in chat.</p>
+        <p style={{ color: '#888' }}>Memory saved and ready for Claude to use.</p>
         <a href="/" style={{ display: 'inline-block', marginTop: 24, color: '#aaa' }}>← Back</a>
       </div>
     );

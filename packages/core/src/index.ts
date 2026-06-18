@@ -14,7 +14,7 @@ import { createExperience, getExperience, listExperiences, updateExperienceField
 import { renderForSurface } from './render/index.js';
 import { parseJobDescription } from './tailor/parser.js';
 import { scoreExperiences, selectTopExperiences } from './tailor/scorer.js';
-import { computeGapAnalysis, saveSnapshot } from './tailor/snapshot.js';
+import { computeGapAnalysis, getSnapshot, listSnapshots, saveSnapshot } from './tailor/snapshot.js';
 import { SecoError } from './errors.js';
 import type { Experience, ExperienceDraft, IntakeLifecycle, IntakeMode, IntakeSession, ApplicationSnapshot, Surface, RoleType } from './experience/types.js';
 
@@ -227,6 +227,7 @@ export async function abandonSession(sessionId: string): Promise<void> {
 }
 
 export { listExperiences, getExperience };
+export { getSnapshot, listSnapshots };
 
 export function getIntakeSession(sessionId: string): IntakeSession | null {
   try {
@@ -254,6 +255,10 @@ export async function exportLatex(experienceIds: string[]): Promise<string> {
   return renderForSurface(experienceIds, 'latex_bullets');
 }
 
+export async function exportObsidianNote(experienceIds: string[]): Promise<string> {
+  return renderForSurface(experienceIds, 'obsidian_note');
+}
+
 export async function tailorToJD(
   jobDescription: string,
   onProgress?: (status: string) => void
@@ -270,6 +275,7 @@ export async function tailorToJD(
   const surfaces: Surface[] = [
     'resume_bullets',
     'linkedin_summary',
+    'obsidian_note',
     'cover_letter_paragraph',
     'bio_short',
   ];

@@ -5,6 +5,18 @@ type IncomingMessage =
   | { type: 'init'; sessionId: string }
   | { type: 'utterance'; sessionId: string; text: string };
 
+function intakeErrorMessage(error: unknown): string {
+  const detail = String(error);
+  if (
+    detail.includes('authentication_error') ||
+    detail.includes('invalid x-api-key') ||
+    detail.includes('ANTHROPIC_API_KEY')
+  ) {
+    return 'seco could not reach Claude with the configured Anthropic API key. Check ANTHROPIC_API_KEY, then retry this session.';
+  }
+  return 'seco could not generate the next intake question. Your transcript is still local; retry or continue in a moment.';
+}
+
 async function streamQuestion(ws: WebSocket, sessionId: string): Promise<void> {
   ws.send(JSON.stringify({ type: 'status', status: 'thinking' }));
   const turn = await getNextIntakeTurn(sessionId);
@@ -61,7 +73,7 @@ export function registerWsHandlers(wss: WebSocketServer): void {
       } catch (e) {
         process.stderr.write(`  ws error: ${String(e)}\n`);
         ws.send(JSON.stringify({ type: 'status', status: 'idle' }));
-        ws.send(JSON.stringify({ type: 'error', message: String(e) }));
+        ws.send(JSON.stringify({ type: 'error', message: intakeErrorMessage(e) }));
       }
     });
   });

@@ -131,4 +131,22 @@ describe('registerWsHandlers', () => {
     expect(getNextIntakeTurn).not.toHaveBeenCalled();
     expect(socket.sent.map((message) => message['type'])).toEqual(['draft_update', 'status']);
   });
+
+  it('sends an actionable error instead of raw provider details', async () => {
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    vi.mocked(getNextIntakeTurn).mockRejectedValueOnce(new Error('401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}'));
+    const socket = setupSocket();
+
+    try {
+      socket.emit('message', JSON.stringify({ type: 'init', sessionId: 'sess-1' }));
+      await waitForType(socket, 'error');
+
+      const error = socket.sent.find((message) => message['type'] === 'error');
+      expect(error?.['message']).toContain('Check ANTHROPIC_API_KEY');
+      expect(error?.['message']).not.toContain('invalid x-api-key');
+      expect(error?.['message']).not.toContain('authentication_error');
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
 });

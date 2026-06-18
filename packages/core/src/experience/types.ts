@@ -77,6 +77,7 @@ export type Surface =
   | 'linkedin_summary'
   | 'linkedin_post'
   | 'github_readme'
+  | 'obsidian_note'
   | 'latex_bullets'
   | 'cover_letter_paragraph'
   | 'bio_short'
