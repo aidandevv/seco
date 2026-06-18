@@ -10,7 +10,7 @@ Read this file before touching any code. The rules here are not suggestions.
 seco is a locally-run, open-source professional identity engine. It ingests professional
 experiences via a guided text or voice intake flow, stores reviewed memories in a local
 SQLite database, and renders optimized copy for multiple professional surfaces (resume,
-LinkedIn, GitHub README, Overleaf/LaTeX, cover letters) on demand. It is distributed as
+LinkedIn, Obsidian, GitHub README, Overleaf/LaTeX, cover letters) on demand. It is distributed as
 an npx-installable MCP server that runs locally via Claude Desktop and serves a localhost
 browser UI for the guided intake flow.
 
@@ -30,6 +30,11 @@ seco/
 ├── AGENTS.md
 ├── SPEC.md
 ├── README.md
+├── docs/
+│   └── release.md     ← Release checklist and release script contract
+├── mcpb/
+│   └── manifest.json  ← MCPB bundle manifest template
+├── server.json        ← MCP Registry metadata
 └── package.json       ← Workspace root (npm workspaces)
 ```
 
@@ -64,6 +69,7 @@ packages/core/src/
 │   │   ├── resume.ts      ← ATS resume bullet prompt builder
 │   │   ├── linkedin.ts    ← LinkedIn summary prompt builder
 │   │   ├── readme.ts      ← GitHub README prompt builder
+│   │   ├── obsidian.ts    ← Obsidian vault note prompt builder
 │   │   ├── latex.ts       ← Overleaf/LaTeX prompt builder
 │   │   ├── cover.ts       ← Cover letter paragraph prompt builder
 │   │   └── bio.ts         ← Bio (short/med/full) prompt builder

@@ -22,7 +22,14 @@ When in doubt, this file wins over any other document. Keep it current.
 | DB Optional | Supabase JS client | Cross-device sync, opt-in only |
 | Package Manager | npm workspaces | Monorepo, single node_modules |
 | Test Runner | Vitest | Fast, ESM-native, colocated tests |
-| Distribution | npm (`npx seco-mcp`) | Single command install, no global install needed |
+| Distribution | npm (`npx seco-mcp`) + MCP Registry metadata | npm is the installable artifact; registry/directory metadata improves discovery |
+
+Distribution metadata:
+- `package.json#mcpName`: `io.github.aidandevv/seco`
+- `server.json#name`: `io.github.aidandevv/seco`
+- npm package identifier: `seco-mcp`
+- MCPB manifest template: `mcpb/manifest.json`
+- Release checklist and future script contract: `docs/release.md`
 
 ---
 
@@ -172,6 +179,7 @@ export type Surface =
   | 'linkedin_summary'
   | 'linkedin_post'
   | 'github_readme'
+  | 'obsidian_note'
   | 'latex_bullets'
   | 'cover_letter_paragraph'
   | 'bio_short'
@@ -276,13 +284,36 @@ export function exportLatex(experienceIds: string[]): Promise<string>
 const tools = [
   {
     name: 'start_intake_session',
-    description: 'Begin a guided experience intake session when the user wants to add or capture an experience. Return the direct intake_url, ask the user to open it, then call get_intake_session_result after they say they are done.',
+    description: 'Begin a guided experience intake session when the user wants to add or capture an experience. Render the native seco intake MCP App, ask the first question in Claude chat, then call continue_intake_session with each user reply.',
     inputSchema: {
       type: 'object',
       properties: {
         mode: { type: 'string', enum: ['voice', 'text'] }
+      }
+    }
+  },
+  {
+    name: 'continue_intake_session',
+    description: 'Continue guided text intake from the latest Claude-chat answer. Returns draft progress and the next question, or marks the session ready for review.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string' },
+        text: { type: 'string' }
       },
-      required: ['mode']
+      required: ['session_id', 'text']
+    }
+  },
+  {
+    name: 'save_reviewed_intake_session',
+    description: 'Save a reviewed intake draft from the MCP App review UI. Prefer this over save_experience for guided sessions.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string' },
+        draft: { type: 'object' }
+      },
+      required: ['session_id', 'draft']
     }
   },
   {
@@ -299,7 +330,7 @@ const tools = [
   },
   {
     name: 'save_experience',
-    description: 'Legacy/manual path: commit the current intake session to the database without browser review. Prefer get_intake_session_result for guided UI sessions.',
+    description: 'Legacy/manual path: commit the current intake session to the database without browser review. Prefer save_reviewed_intake_session for guided sessions.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -335,7 +366,7 @@ const tools = [
   },
   {
     name: 'render_for_surface',
-    description: 'Generate optimized copy for a target surface (resume_bullets, linkedin_summary, github_readme, latex_bullets, cover_letter_paragraph, bio_short, bio_medium, bio_full, linkedin_post). Optionally paste a job description to tailor the output.',
+    description: 'Generate optimized copy for a target surface (resume_bullets, linkedin_summary, github_readme, obsidian_note, latex_bullets, cover_letter_paragraph, bio_short, bio_medium, bio_full, linkedin_post). Optionally paste a job description to tailor the output.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -346,6 +377,18 @@ const tools = [
       required: ['experience_ids', 'surface']
     }
   },
+  {
+    name: 'export_obsidian_note',
+    description: 'Export one or more experiences as an Obsidian vault-ready Markdown note with YAML frontmatter, tags, backlinks, STAR evidence, and reusable copy angles.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        experience_ids: { type: 'array', items: { type: 'string' } }
+      },
+      required: ['experience_ids']
+    }
+  },
+
   {
     name: 'tailor_to_jd',
     description: 'Run the full tailoring pipeline against a job description. Parses the JD, scores your experience database, selects the best entries, and re-renders all surfaces with JD-specific language.',
@@ -402,20 +445,38 @@ const tools = [
 ```
 1. User asks Claude to add/capture an experience.
 2. Claude calls start_intake_session({ mode }) through MCP.
-3. MCP creates an active local session and returns intake_url: http://localhost:<serverPort>/session/<session_id>.
-4. Claude asks the user to open the link.
-5. Browser shows a handoff screen explaining local-only capture, selected mode, review-before-save, and Start intake.
-6. User starts intake. Text sessions focus the input. Voice sessions request microphone only after the explicit start/speak action.
-7. Browser connects to same-origin /ws and sends init.
-8. Express calls core: getNextIntakeTurn(sessionId), which updates the draft and asks for the highest-value missing field.
-9. After each user utterance, Express sends draft_update, then either question_complete or review_ready.
-10. review_ready stops live questioning and opens the review flow; it does not save automatically.
-11. Browser review validates required fields and at least one skill or impact detail.
-12. Browser calls POST /api/sessions/:id/review/save.
-13. Core creates one Experience, marks the session saved, and returns a plain-text summary.
-14. User returns to Claude and says they are done.
-15. Claude calls get_intake_session_result({ session_id }) and uses the returned experience immediately.
+3. MCP creates an active local session, returns structured intake state, and renders ui://seco/intake.html as an inline MCP App card.
+4. Claude asks the next_question in chat.
+5. After each user answer, Claude calls continue_intake_session({ session_id, text }).
+6. Core appends the transcript, updates the draft, and returns either the next question or ready_for_review state.
+7. The MCP App card shows status, draft progress, confidence, missing fields, and a Review action when ready.
+8. Review opens the MCP App fullscreen editor; it does not save automatically.
+9. The review UI validates required fields and at least one skill or impact detail.
+10. The review UI calls save_reviewed_intake_session.
+11. Core creates one Experience, marks the session saved, and returns a plain-text summary to Claude.
+
+Voice fallback remains available at http://localhost:<serverPort>/session/<session_id>. It uses the existing browser WebSocket flow and never starts the microphone before an explicit start/speak action.
 ```
+
+## Claude Code Optimization
+
+Claude Code is optimized around MCP tools, prompts, and resources rather than the MCP App iframe.
+
+- Project config: `.mcp.json` points Claude Code at `node packages/mcp-server/dist/index.js`.
+- Slash-command prompts:
+  - `/mcp__seco__capture_experience`
+  - `/mcp__seco__capture_voice_experience`
+  - `/mcp__seco__review_draft`
+  - `/mcp__seco__render_obsidian_note`
+  - `/mcp__seco__render_resume`
+  - `/mcp__seco__tailor_to_jd`
+- Resources:
+  - `@seco:experiences://recent`
+  - `@seco:experience://<experience_id>`
+  - `@seco:snapshots://recent`
+  - `@seco:snapshot://<snapshot_id>`
+
+Claude Code text intake should stay terminal-native: ask questions in chat, call `continue_intake_session`, present the reviewed draft in markdown, and call `save_reviewed_intake_session` only after explicit user confirmation. Claude Code voice intake should start a `mode: "voice"` session, send the user to the returned localhost `intake_url`, and fetch the saved result with `get_intake_session_result` after browser review/save.
 
 ## Voice Pipeline
 
@@ -470,6 +531,7 @@ interface PromptBuilder {
 | `linkedin_summary` | First-person. ~300 words. Hook in first sentence. Keywords in prose. Warm professional tone. |
 | `linkedin_post` | Hook-first. Short paragraphs. Conversational. 150–300 words. Story arc. |
 | `github_readme` | Third-person or passive. Technical specificity. Stack named. Markdown native. Contribution framing. |
+| `obsidian_note` | Vault-ready Markdown. YAML frontmatter. Obsidian backlinks. STAR evidence. Durable knowledge-management framing. |
 | `latex_bullets` | Valid LaTeX only. No special chars outside spec. `\item` prefixed. Indentation-aware. |
 | `cover_letter_paragraph` | One experience per paragraph. Connects to company mission. Warm but formal. 100–150 words. |
 | `bio_short` | Third-person. 1–2 sentences. Title + top achievement + affiliation. |
@@ -558,8 +620,10 @@ $ npx seco-mcp
 {
   "name": "seco-mcp",
   "version": "1.0.0",
+  "mcpName": "io.github.aidandevv/seco",
   "bin": {
-    "seco": "packages/mcp-server/dist/index.js"
+    "seco": "packages/mcp-server/dist/index.js",
+    "seco-mcp": "packages/mcp-server/dist/index.js"
   },
   "workspaces": [
     "packages/core",
