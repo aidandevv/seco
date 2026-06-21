@@ -201,11 +201,27 @@ export const toolDefinitions = [
   },
   {
     name: 'export_obsidian_note',
-    description: 'Export one or more experiences as an Obsidian vault-ready Markdown note with frontmatter, tags, backlinks, STAR evidence, and reusable copy angles.',
+    description: 'Export one or more experiences as an Obsidian vault-ready Markdown note with frontmatter, tags, backlinks, STAR evidence, and reusable copy angles. Optionally write the note into an Obsidian vault while keeping SQLite as the canonical store.',
     inputSchema: {
       type: 'object',
       properties: {
         experience_ids: { type: 'array', items: { type: 'string' } },
+        vault_root: {
+          type: 'string',
+          description: 'Optional absolute path, or ~/ path, to an Obsidian vault. When omitted, the tool only returns Markdown.',
+        },
+        folder: {
+          type: 'string',
+          description: 'Optional vault-relative folder. Defaults to seco/experiences.',
+        },
+        filename: {
+          type: 'string',
+          description: 'Optional Markdown filename. Defaults to a stable seco-generated name.',
+        },
+        overwrite: {
+          type: 'boolean',
+          description: 'When true, replace an existing note at the target path. Defaults to false.',
+        },
       },
       required: ['experience_ids'],
     },

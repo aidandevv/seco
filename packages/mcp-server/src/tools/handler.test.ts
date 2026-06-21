@@ -70,6 +70,15 @@ vi.mock('@seco/core', () => ({
     selected: [{ id: 'exp-1' }],
   }),
   exportObsidianNote: vi.fn().mockResolvedValue('---\ntitle: Test Role\n---\n# Test Role'),
+  exportObsidianVaultNote: vi.fn().mockResolvedValue({
+    surface: 'obsidian_note',
+    output: '---\ntitle: Test Role\n---\n# Test Role',
+    path: '/Users/test/Vault/seco/experiences/test-role.md',
+    relative_path: 'seco/experiences/test-role.md',
+    overwritten: false,
+    canonical_store: 'sqlite',
+    source_experience_ids: ['exp-1'],
+  }),
   exportLatex: vi.fn().mockResolvedValue('\\item Built something great'),
   updateExperienceFieldPublic: vi.fn().mockResolvedValue({ id: 'exp-1', title: 'Updated' }),
   deleteExperienceById: vi.fn().mockResolvedValue(undefined),
@@ -267,9 +276,31 @@ describe('handleTool', () => {
   it('export_obsidian_note returns vault-ready markdown output', async () => {
     const result = await handleTool('export_obsidian_note', { experience_ids: ['exp-1'] });
     expect(result.isError).toBeFalsy();
-    const data = JSON.parse(result.content[0].text) as { surface: string; output: string };
+    const data = JSON.parse(result.content[0].text) as { surface: string; output: string; canonical_store: string };
     expect(data.surface).toBe('obsidian_note');
     expect(data.output).toContain('title: Test Role');
+    expect(data.canonical_store).toBe('sqlite');
+  });
+
+  it('export_obsidian_note writes to a vault when vault_root is provided', async () => {
+    const core = await import('@seco/core');
+    const result = await handleTool('export_obsidian_note', {
+      experience_ids: ['exp-1'],
+      vault_root: '/Users/test/Vault',
+      folder: 'Career',
+      filename: 'test-role.md',
+      overwrite: true,
+    });
+    expect(result.isError).toBeFalsy();
+    expect(core.exportObsidianVaultNote).toHaveBeenCalledWith(['exp-1'], {
+      vaultRoot: '/Users/test/Vault',
+      folder: 'Career',
+      filename: 'test-role.md',
+      overwrite: true,
+    });
+    const data = JSON.parse(result.content[0].text) as { path: string; relative_path: string; canonical_store: string };
+    expect(data.relative_path).toBe('seco/experiences/test-role.md');
+    expect(data.canonical_store).toBe('sqlite');
   });
 
   it('delete_experience returns deleted id', async () => {

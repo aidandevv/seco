@@ -143,7 +143,7 @@ Voice requires a Deepgram key for real-time transcription, or an OpenAI key for 
 | `get_experience` | retrieve a single entry |
 | `render_for_surface` | generate copy for any surface |
 | `tailor_to_jd` | full tailoring pipeline against a job description |
-| `export_obsidian_note` | emit an Obsidian vault-ready Markdown note |
+| `export_obsidian_note` | emit an Obsidian vault-ready Markdown note, or write it into a vault when `vault_root` is provided |
 | `export_latex` | emit LaTeX bullet blocks |
 | `update_experience` | targeted field edit |
 | `delete_experience` | remove an entry |
@@ -152,7 +152,15 @@ Voice requires a Deepgram key for real-time transcription, or an OpenAI key for 
 
 ## data
 
-experiences are stored in a local SQLite database at `~/.seco/seco.db`. Drafts are recomputed from the local session transcript/messages and are saved only after review. nothing is sent to any server except your own API calls to Anthropic, Deepgram, and optionally OpenAI for Whisper fallback.
+experiences are stored in a local SQLite database at `~/.seco/seco.db`. SQLite is the canonical store; Obsidian export is an optional Markdown mirror for users who want vault-native notes. Drafts are recomputed from the local session transcript/messages and are saved only after review. nothing is sent to any server except your own API calls to Anthropic, Deepgram, and optionally OpenAI for Whisper fallback.
+
+To write an Obsidian note directly into a vault, call `export_obsidian_note` with:
+
+- `experience_ids`: the saved seco experience IDs
+- `vault_root`: the local Obsidian vault path, including `~/...` paths
+- `folder`: optional vault-relative folder, defaulting to `seco/experiences`
+- `filename`: optional Markdown filename; otherwise seco creates a stable name from the experience and IDs
+- `overwrite`: optional, defaults to `false` so existing notes are not replaced silently
 
 optional cross-device sync via Supabase — set `SUPABASE_URL` and `SUPABASE_ANON_KEY` in `~/.seco/.env` to enable.
 

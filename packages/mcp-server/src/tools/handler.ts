@@ -10,6 +10,7 @@ import {
   renderForSurface,
   tailorToJD,
   exportObsidianNote,
+  exportObsidianVaultNote,
   exportLatex,
   updateExperienceFieldPublic,
   deleteExperienceById,
@@ -220,8 +221,18 @@ export async function handleTool(
       case 'export_obsidian_note': {
         const ids = args['experience_ids'] as string[];
         if (!ids?.length) return err('experience_ids is required');
+        const vaultRoot = typeof args['vault_root'] === 'string' ? args['vault_root'].trim() : '';
+        if (vaultRoot) {
+          const result = await exportObsidianVaultNote(ids, {
+            vaultRoot,
+            folder: typeof args['folder'] === 'string' ? args['folder'] : undefined,
+            filename: typeof args['filename'] === 'string' ? args['filename'] : undefined,
+            overwrite: args['overwrite'] === true,
+          });
+          return ok(result);
+        }
         const note = await exportObsidianNote(ids);
-        return ok({ surface: 'obsidian_note', output: note });
+        return ok({ surface: 'obsidian_note', output: note, canonical_store: 'sqlite' });
       }
 
       case 'export_latex': {

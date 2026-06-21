@@ -404,20 +404,27 @@ export function createSecoMcpServer(webUiDist: string): McpServer {
       description: 'Claude Code workflow for rendering selected seco experiences as an Obsidian vault-ready Markdown note.',
       argsSchema: {
         experience_ids: z.string().optional(),
+        vault_root: z.string().optional(),
+        folder: z.string().optional(),
+        filename: z.string().optional(),
+        overwrite: z.string().optional(),
         vault_context: z.string().optional(),
       },
     },
-    ({ experience_ids: experienceIds, vault_context: vaultContext }) => promptMessage([
+    ({ experience_ids: experienceIds, vault_root: vaultRoot, folder, filename, overwrite, vault_context: vaultContext }) => promptMessage([
       'Render seco experiences as an Obsidian vault note.',
       '',
       experienceIds
         ? `Use these experience IDs: ${experienceIds}`
         : 'If experience IDs are not clear, call mcp__seco__list_experiences or inspect @seco:experiences://recent.',
+      vaultRoot
+        ? `Write the note with mcp__seco__export_obsidian_note using vault_root="${vaultRoot}"${folder ? `, folder="${folder}"` : ''}${filename ? `, filename="${filename}"` : ''}${overwrite ? `, overwrite=${overwrite}` : ''}.`
+        : 'If the user supplies a local vault path, call mcp__seco__export_obsidian_note with vault_root; otherwise return paste-ready Markdown.',
       vaultContext
         ? `Vault context: ${vaultContext}`
         : 'Ask for vault folder/tag/link conventions only if the user has specific Obsidian preferences.',
       '',
-      'Call mcp__seco__render_for_surface with surface="obsidian_note". Return the note as paste-ready Markdown and mention the source experience IDs.',
+      'When no vault write is requested, call mcp__seco__render_for_surface with surface="obsidian_note". Mention the source experience IDs and whether SQLite remains the canonical store.',
     ].join('\n'))
   );
 

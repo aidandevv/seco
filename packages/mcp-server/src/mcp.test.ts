@@ -136,6 +136,17 @@ describe('createSecoMcpServer', () => {
       expect(obsidianText).toContain('surface="obsidian_note"');
       expect(obsidianText).toContain('exp-1, exp-2');
       expect(obsidianText).toContain('People notes use @person tags');
+
+      const vaultPrompt = await client.getPrompt({
+        name: 'render_obsidian_note',
+        arguments: { experience_ids: 'exp-1', vault_root: '~/Career Vault', folder: 'Career/Experiences' },
+      });
+      const vaultText = vaultPrompt.messages[0]?.content.type === 'text'
+        ? vaultPrompt.messages[0].content.text
+        : '';
+      expect(vaultText).toContain('mcp__seco__export_obsidian_note');
+      expect(vaultText).toContain('vault_root="~/Career Vault"');
+      expect(vaultText).toContain('folder="Career/Experiences"');
     });
   });
 });

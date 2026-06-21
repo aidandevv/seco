@@ -379,11 +379,15 @@ const tools = [
   },
   {
     name: 'export_obsidian_note',
-    description: 'Export one or more experiences as an Obsidian vault-ready Markdown note with YAML frontmatter, tags, backlinks, STAR evidence, and reusable copy angles.',
+    description: 'Export one or more experiences as an Obsidian vault-ready Markdown note with YAML frontmatter, tags, backlinks, STAR evidence, and reusable copy angles. Optionally write the rendered Markdown into a local Obsidian vault while keeping SQLite as canonical storage.',
     inputSchema: {
       type: 'object',
       properties: {
-        experience_ids: { type: 'array', items: { type: 'string' } }
+        experience_ids: { type: 'array', items: { type: 'string' } },
+        vault_root: { type: 'string' },
+        folder: { type: 'string' },
+        filename: { type: 'string' },
+        overwrite: { type: 'boolean' }
       },
       required: ['experience_ids']
     }
@@ -531,7 +535,7 @@ interface PromptBuilder {
 | `linkedin_summary` | First-person. ~300 words. Hook in first sentence. Keywords in prose. Warm professional tone. |
 | `linkedin_post` | Hook-first. Short paragraphs. Conversational. 150–300 words. Story arc. |
 | `github_readme` | Third-person or passive. Technical specificity. Stack named. Markdown native. Contribution framing. |
-| `obsidian_note` | Vault-ready Markdown. YAML frontmatter. Obsidian backlinks. STAR evidence. Durable knowledge-management framing. |
+| `obsidian_note` | Vault-ready Markdown. YAML frontmatter. Obsidian backlinks. STAR evidence. Durable knowledge-management framing. Can be returned as text or written to a vault-relative `.md` file by `export_obsidian_note`. |
 | `latex_bullets` | Valid LaTeX only. No special chars outside spec. `\item` prefixed. Indentation-aware. |
 | `cover_letter_paragraph` | One experience per paragraph. Connects to company mission. Warm but formal. 100–150 words. |
 | `bio_short` | Third-person. 1–2 sentences. Title + top achievement + affiliation. |

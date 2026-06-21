@@ -15,10 +15,13 @@ import { renderForSurface } from './render/index.js';
 import { parseJobDescription } from './tailor/parser.js';
 import { scoreExperiences, selectTopExperiences } from './tailor/scorer.js';
 import { computeGapAnalysis, getSnapshot, listSnapshots, saveSnapshot } from './tailor/snapshot.js';
+import { exportObsidianNoteToVault } from './obsidian/vault.js';
 import { SecoError } from './errors.js';
 import type { Experience, ExperienceDraft, IntakeLifecycle, IntakeMode, IntakeSession, ApplicationSnapshot, Surface, RoleType } from './experience/types.js';
+import type { ObsidianVaultExport, ObsidianVaultExportOptions } from './obsidian/vault.js';
 
 export type { Experience, ExperienceDraft, IntakeLifecycle, IntakeMode, IntakeSession, ApplicationSnapshot, Surface, RoleType };
+export type { ObsidianVaultExport, ObsidianVaultExportOptions };
 export { SecoError };
 export { loadConfig, validateConfig, runFirstTimeSetup } from './config/keys.js';
 
@@ -257,6 +260,13 @@ export async function exportLatex(experienceIds: string[]): Promise<string> {
 
 export async function exportObsidianNote(experienceIds: string[]): Promise<string> {
   return renderForSurface(experienceIds, 'obsidian_note');
+}
+
+export async function exportObsidianVaultNote(
+  experienceIds: string[],
+  options: ObsidianVaultExportOptions
+): Promise<ObsidianVaultExport> {
+  return exportObsidianNoteToVault(experienceIds, options);
 }
 
 export async function tailorToJD(
