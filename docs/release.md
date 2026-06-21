@@ -22,14 +22,24 @@ This checklist is the contract for the future release script. Keep it current wi
 Run these before any publish step:
 
 ```bash
-npm test
-npm run build
-npm pack --dry-run --cache .npm-cache
+npm run release:check
 ```
 
-The future release script should run the same commands and fail on the first non-zero exit.
-Use the repo-local `.npm-cache` path so release validation does not depend on
-machine-global npm cache ownership.
+`release:check` runs the full local release gate and fails on the first non-zero
+exit:
+
+```bash
+npm test
+npm run build
+npm audit --omit=dev --cache .npm-cache
+npm pack --dry-run --cache .npm-cache
+npm run release:smoke:tarball
+```
+
+The smoke test creates a real npm tarball, installs it into a temporary project,
+starts the installed `seco-mcp` binary through the MCP SDK stdio client, and
+verifies that the expected tools are listed. Use the repo-local `.npm-cache`
+path so release validation does not depend on machine-global npm cache ownership.
 
 ## npm package
 
@@ -49,9 +59,9 @@ machine-global npm cache ownership.
    - no `*.spec.js`
    - no `*.spec.d.ts`
 5. Smoke-test the packed tarball in a temporary directory:
-   - install the tarball
-   - run the `seco-mcp` binary with a test `ANTHROPIC_API_KEY`
-   - verify MCP initializes and lists tools
+   - run `npm run release:smoke:tarball`
+   - verify the script installs the tarball
+   - verify the installed `seco-mcp` binary initializes and lists tools
 6. Publish with `npm publish --access public` only after the tarball smoke test passes.
 
 ## MCP Registry
@@ -83,7 +93,7 @@ dist/mcpb/seco/
         └── dist/
 ```
 
-Staging steps for the future script:
+Staging steps implemented by `npm run release:stage:mcpb`:
 
 1. Remove and recreate `dist/mcpb/seco`.
 2. Copy `mcpb/manifest.json` to `dist/mcpb/seco/manifest.json`.
@@ -91,7 +101,7 @@ Staging steps for the future script:
 4. Copy each workspace `package.json` needed by production resolution.
 5. Copy built `dist` folders from `packages/core`, `packages/mcp-server`, and `packages/web-ui`.
 6. Run production dependency installation inside the staging directory.
-7. Run `mcpb pack dist/mcpb/seco`.
+7. Run `mcpb pack dist/mcpb/seco` via `npm run release:pack:mcpb`.
 8. Install the generated `.mcpb` in Claude Desktop and verify:
    - required Anthropic key is prompted as sensitive config
    - tools list successfully
@@ -99,20 +109,21 @@ Staging steps for the future script:
    - `render_for_surface` includes `obsidian_note`
    - `export_obsidian_note` returns Markdown
 
-## future release scripts
+## release scripts
 
-Add these scripts once the staging code exists:
+Release scripts:
 
 ```json
 {
   "scripts": {
-    "release:check": "npm test && npm run build && npm pack --dry-run --cache .npm-cache",
+    "release:check": "npm test && npm run build && npm audit --omit=dev --cache .npm-cache && npm pack --dry-run --cache .npm-cache && npm run release:smoke:tarball",
+    "release:smoke:tarball": "node scripts/smoke-packed-tarball.mjs",
     "release:stage:mcpb": "node scripts/stage-mcpb.mjs",
     "release:pack:mcpb": "npm run release:stage:mcpb && mcpb pack dist/mcpb/seco"
   }
 }
 ```
 
-The `scripts/stage-mcpb.mjs` implementation should use explicit allowlists for
-copied paths and should never copy `.git`, `.env`, `~/.seco`, `node_modules` from
-the source checkout, test fixtures with private data, or generated local databases.
+The `scripts/stage-mcpb.mjs` implementation uses explicit allowlists for copied
+paths and never copies `.git`, `.env`, `~/.seco`, `node_modules` from the source
+checkout, test fixtures with private data, or generated local databases.

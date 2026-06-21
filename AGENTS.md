@@ -5,6 +5,27 @@ Read this file before touching any code. The rules here are not suggestions.
 
 ---
 
+## Active Skills — Journaling
+
+**Engineering Journal:**
+Follow skill at `~/.codex/skills/journaling/engineering-journal/SKILL.md`.
+Maintain `./docs/dev_journal.md`. At the end of meaningful engineering work,
+evaluate whether a checkpoint should be logged. Prefer Lightweight schema in
+long or compressed sessions. Never overwrite. Never fabricate.
+
+**Product Insight Journal:**
+Follow skill at `~/.codex/skills/journaling/product-insight-journal/SKILL.md`.
+Maintain `./docs/product_insights.md`. At the end of meaningful product, UX,
+growth, onboarding, retention, or roadmap work, evaluate whether a product
+insight should be logged. Never overwrite. Never fabricate.
+
+**Cross-Log Rule:**
+When an observation has both an engineering dimension and a product dimension
+worth preserving independently, write separate entries in both files and add a
+`[CROSS-LOG]` marker in each entry linking to the other.
+
+---
+
 ## What seco is
 
 seco is a locally-run, open-source professional identity engine. It ingests professional

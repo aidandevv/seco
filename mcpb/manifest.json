@@ -49,6 +49,10 @@
       "description": "Fetch active draft progress or the saved intake result."
     },
     {
+      "name": "save_experience",
+      "description": "Legacy/manual save path for an intake session. Prefer reviewed save for guided sessions."
+    },
+    {
       "name": "list_experiences",
       "description": "Browse saved professional experience entries."
     },
@@ -63,6 +67,18 @@
     {
       "name": "export_obsidian_note",
       "description": "Export saved experiences as Obsidian vault-ready Markdown."
+    },
+    {
+      "name": "export_latex",
+      "description": "Export saved experiences as LaTeX item blocks for Overleaf."
+    },
+    {
+      "name": "update_experience",
+      "description": "Update one field on a saved experience and record a new version."
+    },
+    {
+      "name": "delete_experience",
+      "description": "Delete a saved experience after explicit user confirmation."
     },
     {
       "name": "tailor_to_jd",

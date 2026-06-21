@@ -14,6 +14,61 @@ your data stays on your machine. you bring your own API keys.
 
 ---
 
+## architecture
+
+seco keeps business logic in `@seco/core` and treats Claude Desktop, Claude Code, MCP tools, and the localhost UI as transport surfaces over the same local services.
+
+```mermaid
+flowchart TD
+  User["User in Claude Desktop or Claude Code"]
+  MCP["seco MCP server\nstdio tools and resources"]
+  HTTP["local Express server\nlocalhost UI, API, WebSocket, audio upload"]
+  App["MCP App intake card\nreview-before-save UI"]
+  Browser["browser voice fallback\nMediaRecorder and session page"]
+  Core["@seco/core\nintake, extraction, render, tailor, CRUD"]
+  DB["SQLite at ~/.seco/seco.db"]
+  Anthropic["Anthropic API\nBYOK extraction and rendering"]
+  Deepgram["Deepgram API\noptional real-time voice"]
+  OpenAI["OpenAI Whisper\noptional fallback"]
+
+  User --> MCP
+  MCP --> App
+  MCP --> Core
+  MCP --> HTTP
+  HTTP --> Browser
+  App --> MCP
+  Browser --> HTTP
+  HTTP --> Core
+  Core --> DB
+  Core --> Anthropic
+  Browser --> Deepgram
+  HTTP --> OpenAI
+```
+
+Important boundaries:
+
+- `packages/core` owns all product logic: intake state, draft extraction, rendering, tailoring, database access, and key loading.
+- `packages/mcp-server` owns transport: MCP tool schemas, stdio server startup, local Express routes, WebSocket handling, and static UI serving.
+- `packages/web-ui` owns only the guided intake companion UI. Text intake stays first-class in Claude; browser voice is optional.
+- Memory is saved only through reviewed save paths. Drafts can be recomputed from the local session transcript before persistence.
+
+More Mermaid diagrams live in [docs/diagrams.md](./docs/diagrams.md), including the information architecture, text intake, voice fallback, render/export, JD tailoring, and release/distribution flows.
+
+## privacy and data boundary
+
+Default storage is local SQLite at `~/.seco/seco.db`. Config lives in `~/.seco/.env`.
+
+Data leaves the machine only when a user-supplied key enables a provider call:
+
+- Anthropic: required for guided extraction, draft updates, rendering, and tailoring.
+- Deepgram: optional for real-time browser voice transcription.
+- OpenAI: optional for Whisper fallback when voice transcription needs chunked upload.
+- Supabase: optional future-facing sync adapter when `SUPABASE_URL` and `SUPABASE_ANON_KEY` are configured.
+
+seco does not add hosted storage, authentication, direct LinkedIn/GitHub/Overleaf writes, or automated job application submission.
+
+---
+
 ## install
 
 ```bash
@@ -178,11 +233,11 @@ the most welcome contribution is a new render surface — add a prompt builder i
 
 The recommended distribution path is npm first, then registry/directory metadata:
 
-1. Publish the local server as the `seco-mcp` npm package after `npm run build` and `npm test`.
+1. Publish the local server as the `seco-mcp` npm package after `npm run release:check`.
 2. Keep both package binaries available: `seco` for humans and `seco-mcp` for `npx seco-mcp` MCP configs.
 3. Keep `package.json#mcpName` and `server.json#name` aligned as `io.github.aidandevv/seco`.
 4. Submit `server.json` to the MCP Registry once the npm artifact is published.
-5. Use `mcpb/manifest.json` as the manifest template for a staged `.mcpb` bundle; do not pack the repo root directly.
+5. Use `npm run release:stage:mcpb` and `npm run release:pack:mcpb` to build the staged `.mcpb` bundle; do not pack the repo root directly.
 6. Follow the full release checklist in `docs/release.md` before publishing npm, registry metadata, or an MCPB.
 7. Keep the default deployment local-first. Do not host user data or add auth unless the product direction changes.
 
