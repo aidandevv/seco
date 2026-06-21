@@ -1,9 +1,10 @@
-import { createSession, getSession, appendToTranscript, addAssistantMessage, markSaved, markAbandoned } from './intake/session.js';
+import { createSession, getSession, appendToTranscript, addAssistantMessage, markSaved, markAbandoned, setAutoListenEnabled } from './intake/session.js';
 import { generateNextQuestion, hasCompletionMarker, stripCompletionMarker } from './intake/questions.js';
 import {
   createEmptyExperienceDraft,
   extractExperienceDraft,
   getCachedDraft,
+  getNextDraftQuestionTarget,
   lifecycleForDraft,
   normalizeExperienceDraft,
   setCachedDraft,
@@ -13,11 +14,14 @@ import { createExperience, getExperience, listExperiences, updateExperienceField
 import { renderForSurface } from './render/index.js';
 import { parseJobDescription } from './tailor/parser.js';
 import { scoreExperiences, selectTopExperiences } from './tailor/scorer.js';
-import { computeGapAnalysis, saveSnapshot } from './tailor/snapshot.js';
+import { computeGapAnalysis, getSnapshot, listSnapshots, saveSnapshot } from './tailor/snapshot.js';
+import { exportObsidianNoteToVault } from './obsidian/vault.js';
 import { SecoError } from './errors.js';
-import type { Experience, ExperienceDraft, IntakeLifecycle, IntakeSession, ApplicationSnapshot, Surface, RoleType } from './experience/types.js';
+import type { Experience, ExperienceDraft, IntakeLifecycle, IntakeMode, IntakeSession, ApplicationSnapshot, Surface, RoleType } from './experience/types.js';
+import type { ObsidianVaultExport, ObsidianVaultExportOptions } from './obsidian/vault.js';
 
-export type { Experience, ExperienceDraft, IntakeLifecycle, IntakeSession, ApplicationSnapshot, Surface, RoleType };
+export type { Experience, ExperienceDraft, IntakeLifecycle, IntakeMode, IntakeSession, ApplicationSnapshot, Surface, RoleType };
+export type { ObsidianVaultExport, ObsidianVaultExportOptions };
 export { SecoError };
 export { loadConfig, validateConfig, runFirstTimeSetup } from './config/keys.js';
 
@@ -45,6 +49,8 @@ export interface IntakeSessionResultOptions {
   refreshDraft?: boolean;
 }
 
+const reviewedSavePromises = new Map<string, Promise<CompletedIntake>>();
+
 function buildExperienceSummary(experience: Experience): string {
   return [
     `Experience ID: ${experience.id}`,
@@ -62,14 +68,15 @@ function buildExperienceSummary(experience: Experience): string {
 }
 
 export async function startIntakeSession(_mode: 'voice' | 'text'): Promise<IntakeSession> {
-  const session = createSession();
-  const question = await generateNextQuestion([], createEmptyExperienceDraft());
-  addAssistantMessage(session.id, question);
-  return getSession(session.id);
+  return createSession(_mode);
 }
 
-export function createIntakeSession(_mode: 'voice' | 'text'): IntakeSession {
-  return createSession();
+export function createIntakeSession(mode: IntakeMode, options: { autoListenEnabled?: boolean } = {}): IntakeSession {
+  return createSession(mode, options);
+}
+
+export function setIntakeAutoListen(sessionId: string, enabled: boolean): IntakeSession {
+  return setAutoListenEnabled(sessionId, enabled);
 }
 
 export async function appendTranscript(sessionId: string, text: string): Promise<void> {
@@ -92,7 +99,8 @@ export async function getNextIntakeTurn(sessionId: string): Promise<IntakeTurnRe
   if (lifecycle === 'ready_for_review') {
     return { text: '', draft, lifecycle, complete: true };
   }
-  const response = await generateNextQuestion(session.messages, draft);
+  const target = getNextDraftQuestionTarget(draft);
+  const response = await generateNextQuestion(session.messages, draft, target);
   const text = stripCompletionMarker(response);
   addAssistantMessage(sessionId, text);
   const complete = hasCompletionMarker(response);
@@ -134,12 +142,31 @@ export async function getIntakeDraft(sessionId: string): Promise<ExperienceDraft
 function validateReviewedDraft(draft: ExperienceDraft): void {
   const missing = ['title', 'organization', 'role', 'start_date', 'situation', 'task', 'action', 'result']
     .filter((field) => !String(draft[field as keyof ExperienceDraft] ?? '').trim());
+  if (draft.skills.length === 0 && draft.impact_metrics.length === 0) {
+    missing.push('skills or impact_metrics');
+  }
   if (missing.length > 0) {
     throw new SecoError('INVALID_DRAFT', `Missing required fields: ${missing.join(', ')}`);
   }
 }
 
 export async function saveReviewedIntakeSession(
+  sessionId: string,
+  reviewedDraft: unknown
+): Promise<CompletedIntake> {
+  const existing = reviewedSavePromises.get(sessionId);
+  if (existing) return existing;
+
+  const promise = saveReviewedIntakeSessionOnce(sessionId, reviewedDraft);
+  reviewedSavePromises.set(sessionId, promise);
+  try {
+    return await promise;
+  } finally {
+    reviewedSavePromises.delete(sessionId);
+  }
+}
+
+async function saveReviewedIntakeSessionOnce(
   sessionId: string,
   reviewedDraft: unknown
 ): Promise<CompletedIntake> {
@@ -203,6 +230,7 @@ export async function abandonSession(sessionId: string): Promise<void> {
 }
 
 export { listExperiences, getExperience };
+export { getSnapshot, listSnapshots };
 
 export function getIntakeSession(sessionId: string): IntakeSession | null {
   try {
@@ -230,6 +258,17 @@ export async function exportLatex(experienceIds: string[]): Promise<string> {
   return renderForSurface(experienceIds, 'latex_bullets');
 }
 
+export async function exportObsidianNote(experienceIds: string[]): Promise<string> {
+  return renderForSurface(experienceIds, 'obsidian_note');
+}
+
+export async function exportObsidianVaultNote(
+  experienceIds: string[],
+  options: ObsidianVaultExportOptions
+): Promise<ObsidianVaultExport> {
+  return exportObsidianNoteToVault(experienceIds, options);
+}
+
 export async function tailorToJD(
   jobDescription: string,
   onProgress?: (status: string) => void
@@ -246,6 +285,7 @@ export async function tailorToJD(
   const surfaces: Surface[] = [
     'resume_bullets',
     'linkedin_summary',
+    'obsidian_note',
     'cover_letter_paragraph',
     'bio_short',
   ];

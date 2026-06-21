@@ -5,6 +5,8 @@ export interface Session {
   transcript: string;
   messages: Array<{ role: 'user' | 'assistant'; content: string }>;
   status: 'active' | 'saved' | 'abandoned';
+  mode: 'voice' | 'text';
+  auto_listen_enabled: boolean;
   experience_id: string | null;
 }
 
@@ -41,6 +43,8 @@ export interface ExperienceDraft {
   ats_keywords: string[];
   tags: string[];
   fieldConfidence: Partial<Record<string, DraftFieldConfidence>>;
+  fieldNotes?: Partial<Record<string, string>>;
+  qualityScore?: { star: number; metrics: number; skills: number; overall: number };
   overallConfidence: DraftFieldConfidence;
   missingFields: string[];
   readyForReview: boolean;
@@ -65,6 +69,13 @@ export interface ConfigResponse {
   whisperAvailable: boolean;
 }
 
+export interface HealthResponse {
+  ok: boolean;
+  version: string;
+  deepgramKeyAvailable: boolean;
+  whisperAvailable: boolean;
+}
+
 function audioFilename(mimeType: string): string {
   if (mimeType.includes('mp4')) return 'audio.mp4';
   if (mimeType.includes('mpeg')) return 'audio.mp3';
@@ -79,17 +90,28 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) throw new Error(`${path} failed: ${res.status}`);
+  if (!res.ok) throw new Error('seco could not complete that action. Your local session is still available.');
   return res.json() as Promise<T>;
 }
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`);
-  if (!res.ok) throw new Error(`${path} failed: ${res.status}`);
+  if (!res.ok) throw new Error('seco could not load this session. Check that the local server is still running.');
+  return res.json() as Promise<T>;
+}
+
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error('seco could not update that setting. Try again in a moment.');
   return res.json() as Promise<T>;
 }
 
 export const api = {
+  getHealth: () => get<HealthResponse>('/health'),
   getConfig: () => get<ConfigResponse>('/config'),
   startSession: (mode: 'voice' | 'text') => post<Session>('/sessions', { mode }),
   getSession: (id: string) => get<Session>(`/sessions/${id}`),
@@ -100,12 +122,14 @@ export const api = {
   saveSession: (id: string) => post<Experience>(`/sessions/${id}/save`),
   saveReviewedSession: (id: string, draft: ExperienceDraft) =>
     post<CompletedIntake>(`/sessions/${id}/review/save`, { draft }),
+  updateSessionPreferences: (id: string, preferences: { auto_listen_enabled: boolean }) =>
+    patch<Session>(`/sessions/${id}/preferences`, preferences),
   abandonSession: (id: string) => post<{ ok: boolean }>(`/sessions/${id}/abandon`),
   transcribeAudio: async (blob: Blob): Promise<string> => {
     const fd = new FormData();
     fd.append('file', blob, audioFilename(blob.type));
     const res = await fetch(`${BASE}/audio/whisper`, { method: 'POST', body: fd });
-    if (!res.ok) throw new Error(`whisper failed: ${res.status}`);
+    if (!res.ok) throw new Error('Transcription is unavailable. You can continue with text.');
     const data = (await res.json()) as { text: string };
     return data.text;
   },

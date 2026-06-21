@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { resumeBuilder } from './resume.js';
 import { linkedinSummaryBuilder, linkedinPostBuilder } from './linkedin.js';
 import { latexBuilder } from './latex.js';
+import { obsidianBuilder } from './obsidian.js';
 import type { Experience } from '../../experience/types.js';
 
 const exp: Experience = {
@@ -69,5 +70,19 @@ describe('linkedinPostBuilder', () => {
 describe('latexBuilder', () => {
   it('mentions \\item in systemPrompt', () => {
     expect(latexBuilder.systemPrompt).toContain('\\item');
+  });
+});
+
+describe('obsidianBuilder', () => {
+  it('requires frontmatter and internal links in systemPrompt', () => {
+    expect(obsidianBuilder.systemPrompt).toContain('YAML frontmatter');
+    expect(obsidianBuilder.systemPrompt).toContain('[[...]]');
+  });
+
+  it('includes experience metadata in prompt', () => {
+    const prompt = obsidianBuilder.buildPrompt([exp]);
+    expect(prompt).toContain('Software Engineer');
+    expect(prompt).toContain('TechCorp');
+    expect(prompt).toContain('GitHub Actions');
   });
 });

@@ -1,0 +1,135 @@
+{
+  "$schema": "https://raw.githubusercontent.com/modelcontextprotocol/mcpb/main/schemas/manifest.schema.json",
+  "manifest_version": "0.3",
+  "name": "seco",
+  "display_name": "seco",
+  "version": "1.0.0",
+  "description": "Local-first professional identity engine for reviewed experience capture and Obsidian-ready career memory.",
+  "long_description": "seco captures professional experiences through a guided text or voice intake flow, saves reviewed memories locally, and renders them for Obsidian, resumes, LinkedIn, GitHub README, LaTeX, cover letters, and bios. User data stays on the local machine except for BYOK calls to configured model or transcription providers.",
+  "author": {
+    "name": "seco maintainers"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aidandevv/seco"
+  },
+  "homepage": "https://github.com/aidandevv/seco#readme",
+  "documentation": "https://github.com/aidandevv/seco#readme",
+  "support": "https://github.com/aidandevv/seco/issues",
+  "server": {
+    "type": "node",
+    "entry_point": "packages/mcp-server/dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/packages/mcp-server/dist/index.js"
+      ],
+      "env": {
+        "ANTHROPIC_API_KEY": "${user_config.anthropic_api_key}",
+        "DEEPGRAM_API_KEY": "${user_config.deepgram_api_key}",
+        "OPENAI_API_KEY": "${user_config.openai_api_key}"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "start_intake_session",
+      "description": "Begin a guided reviewed experience intake session."
+    },
+    {
+      "name": "continue_intake_session",
+      "description": "Continue guided text intake with the latest user reply."
+    },
+    {
+      "name": "save_reviewed_intake_session",
+      "description": "Save a reviewed intake draft after explicit confirmation."
+    },
+    {
+      "name": "get_intake_session_result",
+      "description": "Fetch active draft progress or the saved intake result."
+    },
+    {
+      "name": "save_experience",
+      "description": "Legacy/manual save path for an intake session. Prefer reviewed save for guided sessions."
+    },
+    {
+      "name": "list_experiences",
+      "description": "Browse saved professional experience entries."
+    },
+    {
+      "name": "get_experience",
+      "description": "Retrieve one saved professional experience."
+    },
+    {
+      "name": "render_for_surface",
+      "description": "Render saved experiences for Obsidian, resumes, LinkedIn, GitHub README, LaTeX, cover letters, and bios."
+    },
+    {
+      "name": "export_obsidian_note",
+      "description": "Export saved experiences as Obsidian vault-ready Markdown."
+    },
+    {
+      "name": "export_latex",
+      "description": "Export saved experiences as LaTeX item blocks for Overleaf."
+    },
+    {
+      "name": "update_experience",
+      "description": "Update one field on a saved experience and record a new version."
+    },
+    {
+      "name": "delete_experience",
+      "description": "Delete a saved experience after explicit user confirmation."
+    },
+    {
+      "name": "tailor_to_jd",
+      "description": "Select and render the strongest saved experiences for a job description."
+    }
+  ],
+  "prompts_generated": true,
+  "keywords": [
+    "mcp",
+    "career",
+    "resume",
+    "obsidian",
+    "local-first"
+  ],
+  "license": "MIT",
+  "privacy_policies": [
+    "https://www.anthropic.com/privacy",
+    "https://deepgram.com/privacy",
+    "https://openai.com/policies/privacy-policy"
+  ],
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": [
+      "darwin",
+      "win32"
+    ],
+    "runtimes": {
+      "node": ">=20.0.0"
+    }
+  },
+  "user_config": {
+    "anthropic_api_key": {
+      "type": "string",
+      "title": "Anthropic API key",
+      "description": "Required for guided extraction and rendering. Stored by Claude Desktop as sensitive configuration.",
+      "sensitive": true,
+      "required": true
+    },
+    "deepgram_api_key": {
+      "type": "string",
+      "title": "Deepgram API key",
+      "description": "Optional. Enables real-time voice transcription.",
+      "sensitive": true,
+      "required": false
+    },
+    "openai_api_key": {
+      "type": "string",
+      "title": "OpenAI API key",
+      "description": "Optional. Enables Whisper fallback for voice transcription.",
+      "sensitive": true,
+      "required": false
+    }
+  }
+}

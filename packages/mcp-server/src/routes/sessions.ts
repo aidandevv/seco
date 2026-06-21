@@ -7,6 +7,7 @@ import {
   getIntakeSessionResult,
   saveSession,
   saveReviewedIntakeSession,
+  setIntakeAutoListen,
   abandonSession,
   getIntakeSession,
 } from '@seco/core';
@@ -78,6 +79,21 @@ export function registerSessionRoutes(router: Router): void {
     try {
       const result = await getIntakeSessionResult(req.params['id']!);
       res.json(result);
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  router.patch('/sessions/:id/preferences', (req, res) => {
+    try {
+      const session = getIntakeSession(req.params['id']!);
+      if (!session) { res.status(404).json({ error: 'session not found' }); return; }
+      const { auto_listen_enabled } = req.body as { auto_listen_enabled?: unknown };
+      if (typeof auto_listen_enabled !== 'boolean') {
+        res.status(400).json({ error: 'auto_listen_enabled must be a boolean' });
+        return;
+      }
+      res.json(setIntakeAutoListen(req.params['id']!, auto_listen_enabled));
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }

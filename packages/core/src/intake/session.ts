@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { getDb } from '../db/client.js';
 import { SecoError } from '../errors.js';
-import type { IntakeSession } from '../experience/types.js';
+import type { IntakeMode, IntakeSession } from '../experience/types.js';
 
 interface SessionState extends IntakeSession {}
 type SessionRow = {
@@ -9,6 +9,8 @@ type SessionRow = {
   transcript: string;
   messages: string;
   status: string;
+  mode?: string;
+  auto_listen_enabled?: number;
   experience_id: string | null;
   created_at: string;
   updated_at: string;
@@ -22,6 +24,10 @@ export function clearSessionCacheForTests(): void {
 
 function isSessionStatus(status: string): status is IntakeSession['status'] {
   return status === 'active' || status === 'saved' || status === 'abandoned';
+}
+
+function normalizeMode(mode: unknown): IntakeMode {
+  return mode === 'voice' ? 'voice' : 'text';
 }
 
 function parseMessages(value: string): IntakeSession['messages'] {
@@ -48,6 +54,8 @@ function loadPersistedSession(id: string): SessionState | null {
     transcript: row.transcript,
     messages: parseMessages(row.messages),
     status: row.status,
+    mode: normalizeMode(row.mode),
+    auto_listen_enabled: row.auto_listen_enabled === 1,
     experience_id: row.experience_id,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -56,13 +64,15 @@ function loadPersistedSession(id: string): SessionState | null {
   return session;
 }
 
-export function createSession(): IntakeSession {
+export function createSession(mode: IntakeMode = 'text', options: { autoListenEnabled?: boolean } = {}): IntakeSession {
   const now = new Date().toISOString();
   const session: SessionState = {
     id: randomUUID(),
     transcript: '',
     messages: [],
     status: 'active',
+    mode,
+    auto_listen_enabled: mode === 'voice' ? options.autoListenEnabled === true : false,
     experience_id: null,
     created_at: now,
     updated_at: now,
@@ -109,28 +119,40 @@ export function markAbandoned(id: string): void {
   sessions.delete(id);
 }
 
+export function setAutoListenEnabled(id: string, enabled: boolean): IntakeSession {
+  const session = getSession(id);
+  session.auto_listen_enabled = session.mode === 'voice' ? enabled : false;
+  session.updated_at = new Date().toISOString();
+  persistSession(session);
+  return { ...session };
+}
+
 function persistSession(session: SessionState): void {
   const db = getDb();
   const exists = db.prepare('SELECT 1 FROM intake_sessions WHERE id = ?').get(session.id);
   if (exists) {
     db.prepare(
-      'UPDATE intake_sessions SET transcript = ?, messages = ?, status = ?, experience_id = ?, updated_at = ? WHERE id = ?'
+      'UPDATE intake_sessions SET transcript = ?, messages = ?, status = ?, mode = ?, auto_listen_enabled = ?, experience_id = ?, updated_at = ? WHERE id = ?'
     ).run(
       session.transcript,
       JSON.stringify(session.messages),
       session.status,
+      session.mode,
+      session.auto_listen_enabled ? 1 : 0,
       session.experience_id,
       session.updated_at,
       session.id
     );
   } else {
     db.prepare(
-      'INSERT INTO intake_sessions (id, transcript, messages, status, experience_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO intake_sessions (id, transcript, messages, status, mode, auto_listen_enabled, experience_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
     ).run(
       session.id,
       session.transcript,
       JSON.stringify(session.messages),
       session.status,
+      session.mode,
+      session.auto_listen_enabled ? 1 : 0,
       session.experience_id,
       session.created_at,
       session.updated_at

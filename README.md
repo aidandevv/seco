@@ -1,14 +1,71 @@
 # seco
 
-a local professional identity engine. one intake session, every surface.
+a local professional identity engine. capture professional experiences once, reuse them everywhere.
 
 ---
 
 ## what it does
 
-seco coaches you through a voice conversation about your work, stores your experiences locally, and renders optimized copy for wherever you need to show up professionally — resume, LinkedIn, GitHub, Overleaf, cover letters.
+seco helps you capture professional experiences through a guided local intake flow, stores reviewed memories in SQLite, and renders optimized copy for the surfaces where your work needs to show up: Obsidian vault notes, resumes, LinkedIn, GitHub README, Overleaf/LaTeX, cover letters, and bios.
+
+Claude starts intake through MCP and renders a native seco intake card in chat. Text intake stays in Claude: seco returns targeted follow-up questions, tracks draft progress in the card, and opens a focused review UI before saving. The localhost browser flow remains available as a voice fallback.
 
 your data stays on your machine. you bring your own API keys.
+
+---
+
+## architecture
+
+seco keeps business logic in `@seco/core` and treats Claude Desktop, Claude Code, MCP tools, and the localhost UI as transport surfaces over the same local services.
+
+```mermaid
+flowchart TD
+  User["User in Claude Desktop or Claude Code"]
+  MCP["seco MCP server\nstdio tools and resources"]
+  HTTP["local Express server\nlocalhost UI, API, WebSocket, audio upload"]
+  App["MCP App intake card\nreview-before-save UI"]
+  Browser["browser voice fallback\nMediaRecorder and session page"]
+  Core["@seco/core\nintake, extraction, render, tailor, CRUD"]
+  DB["SQLite at ~/.seco/seco.db"]
+  Anthropic["Anthropic API\nBYOK extraction and rendering"]
+  Deepgram["Deepgram API\noptional real-time voice"]
+  OpenAI["OpenAI Whisper\noptional fallback"]
+
+  User --> MCP
+  MCP --> App
+  MCP --> Core
+  MCP --> HTTP
+  HTTP --> Browser
+  App --> MCP
+  Browser --> HTTP
+  HTTP --> Core
+  Core --> DB
+  Core --> Anthropic
+  Browser --> Deepgram
+  HTTP --> OpenAI
+```
+
+Important boundaries:
+
+- `packages/core` owns all product logic: intake state, draft extraction, rendering, tailoring, database access, and key loading.
+- `packages/mcp-server` owns transport: MCP tool schemas, stdio server startup, local Express routes, WebSocket handling, and static UI serving.
+- `packages/web-ui` owns only the guided intake companion UI. Text intake stays first-class in Claude; browser voice is optional.
+- Memory is saved only through reviewed save paths. Drafts can be recomputed from the local session transcript before persistence.
+
+More Mermaid diagrams live in [docs/diagrams.md](./docs/diagrams.md), including the information architecture, text intake, voice fallback, render/export, JD tailoring, and release/distribution flows.
+
+## privacy and data boundary
+
+Default storage is local SQLite at `~/.seco/seco.db`. Config lives in `~/.seco/.env`.
+
+Data leaves the machine only when a user-supplied key enables a provider call:
+
+- Anthropic: required for guided extraction, draft updates, rendering, and tailoring.
+- Deepgram: optional for real-time browser voice transcription.
+- OpenAI: optional for Whisper fallback when voice transcription needs chunked upload.
+- Supabase: optional future-facing sync adapter when `SUPABASE_URL` and `SUPABASE_ANON_KEY` are configured.
+
+seco does not add hosted storage, authentication, direct LinkedIn/GitHub/Overleaf writes, or automated job application submission.
 
 ---
 
@@ -51,16 +108,65 @@ after running `npx seco-mcp` once, add this to your Claude Desktop config:
 
 restart Claude Desktop. you can now say things like:
 
-> *"start a new intake session"*  
+> *"add an experience from my website redesign project"*  
 > *"render my last three experiences as resume bullets"*  
+> *"turn this experience into an Obsidian note for my career vault"*  
 > *"tailor everything to this job description: [paste JD]"*  
 > *"export my internship experience as LaTeX"*
 
 ---
 
-## voice intake
+## claude code setup
 
-for the voice-coached intake flow, open [http://localhost:3000](http://localhost:3000) after starting seco. this requires a Deepgram key for real-time transcription, or an OpenAI key for the Whisper fallback.
+This repo includes a project `.mcp.json` for Claude Code:
+
+```bash
+npm run build
+claude
+```
+
+Claude Code can then use seco as a terminal-native MCP server. Useful entrypoints:
+
+- `/mcp__seco__capture_experience` — guided text intake in Claude Code chat
+- `/mcp__seco__capture_voice_experience` — voice intake through the localhost microphone fallback
+- `/mcp__seco__review_draft <session_id>` — review an active intake before saving
+- `/mcp__seco__render_obsidian_note` — render saved experiences as Obsidian vault-ready Markdown
+- `/mcp__seco__render_resume` — render saved experiences as resume bullets
+- `/mcp__seco__tailor_to_jd` — tailor saved experiences to a pasted job description
+
+Claude Code resources are available for @-mentions:
+
+- `@seco:experiences://recent`
+- `@seco:experience://<experience_id>`
+- `@seco:snapshots://recent`
+- `@seco:snapshot://<snapshot_id>`
+
+In Claude Code, text intake does not require the browser. The browser UI remains available for voice fallback and compatibility.
+
+---
+
+## guided intake flow
+
+Claude renders the MCP App intake card inline. The browser UI is still served by the same local seco server for voice fallback and compatibility links like `http://localhost:3001/session/<session_id>`.
+
+Flow:
+
+1. Ask Claude to add or capture an experience.
+2. Claude calls `start_intake_session`, renders the seco intake card, and asks the first guided question in chat.
+3. Answer in Claude; Claude calls `continue_intake_session` after each reply.
+4. The card shows draft progress, confidence, missing fields, and review readiness.
+5. When ready, open the card review UI, edit structured fields, and save the memory locally.
+6. The saved experience is returned to Claude immediately for the current task.
+
+Voice mode is intentional: the microphone never starts until you click the start/speak action. Auto-listen is off by default and can be enabled only after you explicitly start voice once.
+
+Voice requires a Deepgram key for real-time transcription, or an OpenAI key for the Whisper fallback. Text intake works without either voice key.
+
+---
+
+## local server
+
+`seco` runs one local HTTP server for the browser UI, `/api/*` routes, root compatibility routes, `/ws`, and audio upload. The server starts on port `3001` when available and chooses the next open local port if needed. MCP-generated intake links use the actual selected port.
 
 ---
 
@@ -68,6 +174,7 @@ for the voice-coached intake flow, open [http://localhost:3000](http://localhost
 
 | surface | format |
 |---|---|
+| obsidian note | vault-ready Markdown with YAML frontmatter, tags, backlinks, STAR evidence, and reusable copy angles |
 | resume bullets | ATS-optimized, action verb + metric |
 | linkedin summary | ~300 words, first-person prose |
 | linkedin post | hook-first, 150–300 words |
@@ -82,12 +189,16 @@ for the voice-coached intake flow, open [http://localhost:3000](http://localhost
 
 | tool | description |
 |---|---|
-| `start_intake_session` | begin a voice or text coaching session |
-| `save_experience` | commit session to local database |
+| `start_intake_session` | create a guided intake session and render the native MCP App card |
+| `continue_intake_session` | continue guided text intake with the latest Claude-chat answer |
+| `save_reviewed_intake_session` | save a reviewed draft from the MCP App review UI |
+| `get_intake_session_result` | poll or fetch an intake result; returns draft progress while active and the saved experience after review/save |
+| `save_experience` | legacy/manual path that commits a session without the browser review flow |
 | `list_experiences` | browse entries with optional filters |
 | `get_experience` | retrieve a single entry |
 | `render_for_surface` | generate copy for any surface |
 | `tailor_to_jd` | full tailoring pipeline against a job description |
+| `export_obsidian_note` | emit an Obsidian vault-ready Markdown note, or write it into a vault when `vault_root` is provided |
 | `export_latex` | emit LaTeX bullet blocks |
 | `update_experience` | targeted field edit |
 | `delete_experience` | remove an entry |
@@ -96,7 +207,15 @@ for the voice-coached intake flow, open [http://localhost:3000](http://localhost
 
 ## data
 
-experiences are stored in a local SQLite database at `~/.seco/seco.db`. nothing is sent to any server except your own API calls to Anthropic and Deepgram.
+experiences are stored in a local SQLite database at `~/.seco/seco.db`. SQLite is the canonical store; Obsidian export is an optional Markdown mirror for users who want vault-native notes. Drafts are recomputed from the local session transcript/messages and are saved only after review. nothing is sent to any server except your own API calls to Anthropic, Deepgram, and optionally OpenAI for Whisper fallback.
+
+To write an Obsidian note directly into a vault, call `export_obsidian_note` with:
+
+- `experience_ids`: the saved seco experience IDs
+- `vault_root`: the local Obsidian vault path, including `~/...` paths
+- `folder`: optional vault-relative folder, defaulting to `seco/experiences`
+- `filename`: optional Markdown filename; otherwise seco creates a stable name from the experience and IDs
+- `overwrite`: optional, defaults to `false` so existing notes are not replaced silently
 
 optional cross-device sync via Supabase — set `SUPABASE_URL` and `SUPABASE_ANON_KEY` in `~/.seco/.env` to enable.
 
@@ -107,6 +226,20 @@ optional cross-device sync via Supabase — set `SUPABASE_URL` and `SUPABASE_ANO
 see [AGENTS.md](./AGENTS.md) for the architectural rules before opening a PR.
 
 the most welcome contribution is a new render surface — add a prompt builder in `packages/core/src/render/prompts/` and register it in the surface map. no other files need to change.
+
+---
+
+## distribution checklist
+
+The recommended distribution path is npm first, then registry/directory metadata:
+
+1. Publish the local server as the `seco-mcp` npm package after `npm run release:check`.
+2. Keep both package binaries available: `seco` for humans and `seco-mcp` for `npx seco-mcp` MCP configs.
+3. Keep `package.json#mcpName` and `server.json#name` aligned as `io.github.aidandevv/seco`.
+4. Submit `server.json` to the MCP Registry once the npm artifact is published.
+5. Use `npm run release:stage:mcpb` and `npm run release:pack:mcpb` to build the staged `.mcpb` bundle; do not pack the repo root directly.
+6. Follow the full release checklist in `docs/release.md` before publishing npm, registry metadata, or an MCPB.
+7. Keep the default deployment local-first. Do not host user data or add auth unless the product direction changes.
 
 ---
 

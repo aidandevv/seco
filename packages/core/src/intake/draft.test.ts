@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyConversationalCorrections,
   DRAFT_EXTRACTOR_MODEL,
+  getNextDraftQuestionTarget,
   lifecycleForDraft,
   normalizeExperienceDraft,
 } from './draft.js';
@@ -38,6 +40,7 @@ describe('draft extraction helpers', () => {
 
     expect(draft.readyForReview).toBe(true);
     expect(draft.missingFields).toEqual([]);
+    expect(draft.qualityScore?.overall).toBeGreaterThan(0);
     expect(lifecycleForDraft(draft)).toBe('ready_for_review');
   });
 
@@ -59,6 +62,32 @@ describe('draft extraction helpers', () => {
     expect(draft.readyForReview).toBe(false);
     expect(draft.missingFields).toContain('situation');
     expect(draft.missingFields).toContain('result');
+    expect(draft.fieldNotes?.result).toContain('result');
     expect(lifecycleForDraft(draft)).not.toBe('ready_for_review');
+  });
+
+  it('chooses the highest-value missing question target', () => {
+    const draft = normalizeExperienceDraft({
+      organization: 'Acme',
+      role: 'Engineer',
+      fieldConfidence: { organization: 'high', role: 'high' },
+    });
+    expect(getNextDraftQuestionTarget(draft)).toEqual({
+      field: 'title',
+      prompt: 'What should we call this experience?',
+    });
+  });
+
+  it('applies conversational correction commands with field notes', () => {
+    const draft = normalizeExperienceDraft({
+      title: 'Old title',
+      organization: 'Old org',
+      role: 'Engineer',
+      fieldConfidence: { title: 'high', organization: 'medium', role: 'high' },
+    });
+    applyConversationalCorrections(draft, [{ role: 'user', content: 'change the company to NewCo' }]);
+    expect(draft.organization).toBe('NewCo');
+    expect(draft.fieldConfidence.organization).toBe('high');
+    expect(draft.fieldNotes?.organization).toBe('Updated organization');
   });
 });

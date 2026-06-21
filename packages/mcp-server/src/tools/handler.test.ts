@@ -5,16 +5,46 @@ vi.mock('@seco/core', () => ({
     id: 'sess-1',
     messages: [],
     status: 'active',
+    mode: 'text',
+    auto_listen_enabled: false,
     transcript: '',
     experience_id: null,
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-01T00:00:00Z',
+  }),
+  appendTranscript: vi.fn().mockResolvedValue(undefined),
+  getNextIntakeTurn: vi.fn().mockResolvedValue({
+    text: 'What changed because of your work?',
+    lifecycle: 'needs_details',
+    complete: false,
+    draft: {
+      title: 'Draft role',
+      organization: 'Acme',
+      role: 'Builder',
+      role_type: 'project',
+      start_date: '2024',
+      end_date: null,
+      situation: 'A tricky context',
+      task: 'A hard task',
+      action: 'A useful action',
+      result: '',
+      skills: ['React'],
+      impact_metrics: [],
+      ats_keywords: [],
+      tags: [],
+      fieldConfidence: {},
+      overallConfidence: 'medium',
+      missingFields: ['result'],
+      readyForReview: false,
+    },
   }),
   getIntakeSessionResult: vi.fn().mockResolvedValue({
     session: {
       id: 'sess-1',
       messages: [],
       status: 'active',
+      mode: 'text',
+      auto_listen_enabled: false,
       transcript: '',
       experience_id: null,
       created_at: '2024-01-01T00:00:00Z',
@@ -27,6 +57,10 @@ vi.mock('@seco/core', () => ({
       readyForReview: false,
     },
   }),
+  saveReviewedIntakeSession: vi.fn().mockResolvedValue({
+    experience: { id: 'exp-1', title: 'Test Role' },
+    summary: 'Experience ID: exp-1',
+  }),
   saveSession: vi.fn().mockResolvedValue({ id: 'exp-1', title: 'Test Role' }),
   listExperiences: vi.fn().mockReturnValue([{ id: 'exp-1', title: 'Test Role' }]),
   getExperience: vi.fn().mockReturnValue({ id: 'exp-1', title: 'Test Role' }),
@@ -34,6 +68,16 @@ vi.mock('@seco/core', () => ({
   tailorToJD: vi.fn().mockResolvedValue({
     snapshot: { id: 'snap-1', gap_analysis: { React: 0.9 } },
     selected: [{ id: 'exp-1' }],
+  }),
+  exportObsidianNote: vi.fn().mockResolvedValue('---\ntitle: Test Role\n---\n# Test Role'),
+  exportObsidianVaultNote: vi.fn().mockResolvedValue({
+    surface: 'obsidian_note',
+    output: '---\ntitle: Test Role\n---\n# Test Role',
+    path: '/Users/test/Vault/seco/experiences/test-role.md',
+    relative_path: 'seco/experiences/test-role.md',
+    overwritten: false,
+    canonical_store: 'sqlite',
+    source_experience_ids: ['exp-1'],
   }),
   exportLatex: vi.fn().mockResolvedValue('\\item Built something great'),
   updateExperienceFieldPublic: vi.fn().mockResolvedValue({ id: 'exp-1', title: 'Updated' }),
@@ -51,34 +95,91 @@ vi.mock('@seco/core', () => ({
 }));
 
 import { handleTool } from './handler.js';
+import { toolDefinitions } from './definitions.js';
 import { setRuntimeContext } from '../runtime.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
-  setRuntimeContext({ apiPort: 3001, uiPort: 3000, uiUrl: 'http://localhost:3000' });
+  setRuntimeContext({ apiPort: 3001, uiPort: 3001, uiUrl: 'http://localhost:3001' });
 });
 
 describe('handleTool', () => {
   it('start_intake_session returns session_id', async () => {
     const result = await handleTool('start_intake_session', { mode: 'text' });
     expect(result.isError).toBeFalsy();
-    const data = JSON.parse(result.content[0].text) as { session_id: string; intake_url: string; status: string };
+    const data = JSON.parse(result.content[0].text) as { session_id: string; intake_url: string; status: string; mode: string; next_step: string; next_question?: string };
     expect(data.session_id).toBe('sess-1');
     expect(data.status).toBe('active');
-    expect(data.intake_url).toBe('http://localhost:3000/session/sess-1');
+    expect(data.mode).toBe('text');
+    expect(data.intake_url).toBe('http://localhost:3001/session/sess-1');
+    expect(data.next_step).toContain('continue_intake_session');
+    expect(data.next_question).toBe('What changed because of your work?');
+    expect(result._meta).toMatchObject({ ui: { resourceUri: 'ui://seco/intake.html' } });
   });
 
   it('start_intake_session uses the dynamic runtime UI URL', async () => {
     setRuntimeContext({ apiPort: 3003, uiPort: 3002, uiUrl: 'http://localhost:3002' });
     const result = await handleTool('start_intake_session', { mode: 'voice' });
-    const data = JSON.parse(result.content[0].text) as { intake_url: string };
+    const data = JSON.parse(result.content[0].text) as { intake_url: string; message: string; next_step: string };
     expect(data.intake_url).toBe('http://localhost:3002/session/sess-1');
+    expect(data.message).toContain('Claude Desktop is not recording audio');
+    expect(data.next_step).toContain('Microphone capture is not active');
+  });
+
+  it('start_intake_session defaults omitted mode to text', async () => {
+    const core = await import('@seco/core');
+    const result = await handleTool('start_intake_session', {});
+    expect(result.isError).toBeFalsy();
+    expect(core.createIntakeSession).toHaveBeenCalledWith('text');
   });
 
   it('get_intake_session_result requires session_id', async () => {
     const result = await handleTool('get_intake_session_result', {});
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('session_id');
+  });
+
+  it('continue_intake_session requires session_id and text', async () => {
+    const missingSession = await handleTool('continue_intake_session', { text: 'answer' });
+    const missingText = await handleTool('continue_intake_session', { session_id: 'sess-1' });
+    expect(missingSession.isError).toBe(true);
+    expect(missingText.isError).toBe(true);
+  });
+
+  it('continue_intake_session appends the reply and returns the next question', async () => {
+    const core = await import('@seco/core');
+    const result = await handleTool('continue_intake_session', {
+      session_id: 'sess-1',
+      text: 'I improved conversion by 20%.',
+    });
+    expect(result.isError).toBeFalsy();
+    expect(core.appendTranscript).toHaveBeenCalledWith('sess-1', 'I improved conversion by 20%.');
+    const data = JSON.parse(result.content[0].text) as {
+      session_id: string;
+      lifecycle: string;
+      next_question: string;
+      ready_for_review: boolean;
+      missing_fields: string[];
+    };
+    expect(data.session_id).toBe('sess-1');
+    expect(data.lifecycle).toBe('needs_details');
+    expect(data.next_question).toBe('What changed because of your work?');
+    expect(data.ready_for_review).toBe(false);
+    expect(data.missing_fields).toEqual(['result']);
+  });
+
+  it('save_reviewed_intake_session saves reviewed draft and returns saved state', async () => {
+    const core = await import('@seco/core');
+    const result = await handleTool('save_reviewed_intake_session', {
+      session_id: 'sess-1',
+      draft: { title: 'Reviewed' },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(core.saveReviewedIntakeSession).toHaveBeenCalledWith('sess-1', { title: 'Reviewed' });
+    const data = JSON.parse(result.content[0].text) as { status: string; experience_id: string; summary: string };
+    expect(data.status).toBe('saved');
+    expect(data.experience_id).toBe('exp-1');
+    expect(data.summary).toContain('exp-1');
   });
 
   it('get_intake_session_result returns active draft progress', async () => {
@@ -93,7 +194,7 @@ describe('handleTool', () => {
     };
     expect(data.status).toBe('active');
     expect(data.session_id).toBe('sess-1');
-    expect(data.intake_url).toBe('http://localhost:3000/session/sess-1');
+    expect(data.intake_url).toBe('http://localhost:3001/session/sess-1');
     expect(data.lifecycle).toBe('needs_details');
     expect(data.missing_fields).toEqual(['result']);
   });
@@ -105,6 +206,8 @@ describe('handleTool', () => {
         id: 'sess-1',
         messages: [],
         status: 'saved',
+        mode: 'text',
+        auto_listen_enabled: false,
         transcript: '',
         experience_id: 'exp-1',
         created_at: '2024-01-01T00:00:00Z',
@@ -170,6 +273,36 @@ describe('handleTool', () => {
     expect(result.isError).toBe(true);
   });
 
+  it('export_obsidian_note returns vault-ready markdown output', async () => {
+    const result = await handleTool('export_obsidian_note', { experience_ids: ['exp-1'] });
+    expect(result.isError).toBeFalsy();
+    const data = JSON.parse(result.content[0].text) as { surface: string; output: string; canonical_store: string };
+    expect(data.surface).toBe('obsidian_note');
+    expect(data.output).toContain('title: Test Role');
+    expect(data.canonical_store).toBe('sqlite');
+  });
+
+  it('export_obsidian_note writes to a vault when vault_root is provided', async () => {
+    const core = await import('@seco/core');
+    const result = await handleTool('export_obsidian_note', {
+      experience_ids: ['exp-1'],
+      vault_root: '/Users/test/Vault',
+      folder: 'Career',
+      filename: 'test-role.md',
+      overwrite: true,
+    });
+    expect(result.isError).toBeFalsy();
+    expect(core.exportObsidianVaultNote).toHaveBeenCalledWith(['exp-1'], {
+      vaultRoot: '/Users/test/Vault',
+      folder: 'Career',
+      filename: 'test-role.md',
+      overwrite: true,
+    });
+    const data = JSON.parse(result.content[0].text) as { path: string; relative_path: string; canonical_store: string };
+    expect(data.relative_path).toBe('seco/experiences/test-role.md');
+    expect(data.canonical_store).toBe('sqlite');
+  });
+
   it('delete_experience returns deleted id', async () => {
     const result = await handleTool('delete_experience', { id: 'exp-1' });
     expect(result.isError).toBeFalsy();
@@ -180,5 +313,16 @@ describe('handleTool', () => {
   it('unknown tool returns isError', async () => {
     const result = await handleTool('nonexistent_tool', {});
     expect(result.isError).toBe(true);
+  });
+
+  it('exposes enums for high-value MCP fields', () => {
+    const render = toolDefinitions.find((tool) => tool.name === 'render_for_surface');
+    const update = toolDefinitions.find((tool) => tool.name === 'update_experience');
+    expect(render?.inputSchema.properties.surface).toMatchObject({
+      enum: expect.arrayContaining(['resume_bullets', 'linkedin_summary', 'obsidian_note', 'bio_full']),
+    });
+    expect(update?.inputSchema.properties.field).toMatchObject({
+      enum: expect.arrayContaining(['title', 'organization', 'impact_metrics']),
+    });
   });
 });

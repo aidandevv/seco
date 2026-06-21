@@ -9,6 +9,7 @@ dist/
 .env.local
 .env*.local
 *.tsbuildinfo
+.npm-cache/
 
 # Local AI-agent/operator artifacts
 .claude/

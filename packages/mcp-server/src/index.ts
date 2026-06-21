@@ -1,10 +1,5 @@
 #!/usr/bin/env node
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
 import express from 'express';
 import { createServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
@@ -12,23 +7,25 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { loadConfig, validateConfig, runFirstTimeSetup } from '@seco/core';
-import { toolDefinitions } from './tools/definitions.js';
-import { handleTool } from './tools/handler.js';
 import { registerWsHandlers } from './routes/ws.js';
 import { setRuntimeContext } from './runtime.js';
 import { configureHttpApp } from './http-app.js';
+import { createSecoMcpServer } from './mcp.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEV = process.argv.includes('--dev');
 
-function findFreePort(preferred: number): Promise<number> {
+function findFreePort(preferred: number, maxPort = 65535): Promise<number> {
+  if (preferred > maxPort) {
+    return Promise.reject(new Error(`No available local port found between 3001 and ${maxPort}`));
+  }
   return new Promise((resolve) => {
     const srv = createNetServer();
     srv.listen(preferred, () => {
       const { port } = srv.address() as { port: number };
       srv.close(() => resolve(port));
     });
-    srv.on('error', () => resolve(findFreePort(preferred + 1)));
+    srv.on('error', () => resolve(findFreePort(preferred + 1, maxPort)));
   });
 }
 
@@ -50,7 +47,7 @@ async function main(): Promise<void> {
 
     process.stderr.write('\n  All set. Add this to your Claude Desktop config:\n\n');
     process.stderr.write(
-      '  {\n    "mcpServers": {\n      "seco": {\n        "command": "npx",\n        "args": ["seco"]\n      }\n    }\n  }\n\n'
+      '  {\n    "mcpServers": {\n      "seco": {\n        "command": "npx",\n        "args": ["seco-mcp"]\n      }\n    }\n  }\n\n'
     );
     process.stderr.write(
       '  Config file location: ~/Library/Application Support/Claude/claude_desktop_config.json\n\n'
@@ -83,26 +80,13 @@ async function main(): Promise<void> {
   const uiUrl = `http://localhost:${serverPort}`;
   setRuntimeContext({ apiPort: serverPort, uiPort: serverPort, uiUrl });
   if (webUiBuilt) {
-    process.stderr.write(`  Voice intake UI: ${uiUrl}\n`);
+    process.stderr.write(`  Guided intake UI: ${uiUrl}\n`);
   }
 
   process.stderr.write('  seco is running.\n');
 
   // Start stdio MCP server
-  const mcpServer = new Server(
-    { name: 'seco', version: '1.0.0' },
-    { capabilities: { tools: {} } }
-  );
-
-  mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: toolDefinitions as unknown as Array<{ name: string; description: string; inputSchema: object }>,
-  }));
-
-  mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args } = request.params;
-    return handleTool(name, (args ?? {}) as Record<string, unknown>);
-  });
-
+  const mcpServer = createSecoMcpServer(webUiDist);
   const transport = new StdioServerTransport();
   await mcpServer.connect(transport);
 }
