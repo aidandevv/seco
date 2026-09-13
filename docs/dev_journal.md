@@ -135,3 +135,17 @@
 **Follow-ups:** Configure pull-request and passing-CI protections on `dev`, `stable`, and `main`. The configured GitHub CLI token was invalid, so API-based configuration requires re-authentication or an active authenticated GitHub browser session.
 
 ---
+
+### [CP-DEBUG] | 2026-09-12: Corrected Delivery Branch Baseline
+
+**Summary:** Corrected the initial `dev` and `stable` branch creation from a stale local `origin/main` ref to the verified current remote `main` commit, `d8041db`.
+
+**Files/Modules Affected:** GitHub `dev` and `stable` branch refs; `docs/dev_journal.md`.
+
+**Key Trade-off:** A dry-run fetch reported the newer remote `main` commit but did not update the local tracking ref. The branches were then safely fast-forwarded after a real fetch confirmed that `main` was six commits ahead with no divergence.
+
+**Evidence:** Remote branch creation initially used `9b6558d`; `git fetch origin main` updated `origin/main` to `d8041db`, and Git confirmed both branch updates as fast-forwards.
+
+**Follow-ups:** Re-authenticate GitHub CLI or browser access before applying remote branch-protection rules.
+
+---
