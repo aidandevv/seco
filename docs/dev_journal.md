@@ -105,3 +105,19 @@
 > - see [PI-ROADMAP] | 2026-06-21: Obsidian Works Best as a Professional Workspace Mirror.
 
 ---
+
+<!-- SESSION: 2026-09-12 17:30 | release preparation and branch delivery flow -->
+
+### [CP-ARCHITECTURE] | 2026-09-12: Documented Branch Delivery Pipeline
+
+**Summary:** Established the repository delivery flow as working branch → `dev` → `stable` → `main`, with pull-request validation and explicit promotion steps.
+
+**Files/Modules Affected:** `AGENTS.md`, `docs/dev_journal.md`.
+
+**Key Trade-off:** The repository instructions now make promotion responsibilities explicit without creating remote branches or changing branch protections; those remote changes require separate approval.
+
+**Evidence:** The updated guidance requires CI-backed pull requests, defines merge strategies for each promotion, and preserves the rule that publishing and remote mutations require explicit approval.
+
+**Follow-ups:** Create and protect the `dev` and `stable` branches remotely when authorized, then align branch-protection rules with this flow.
+
+---

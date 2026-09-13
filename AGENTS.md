@@ -26,6 +26,34 @@ worth preserving independently, write separate entries in both files and add a
 
 ---
 
+## Git Delivery Pipeline
+
+Use this delivery flow for all changes:
+
+```text
+working branch → dev → stable → main
+```
+
+- Create short-lived working branches from `dev` using `<type>/<short-description>`.
+- Merge a working branch into `dev` through a focused pull request with a squash merge.
+- Promote `dev` to `stable` through a pull request with a merge commit after integration validation.
+- Promote `stable` to `main` through a pull request with a merge commit after release validation.
+- Protect `dev`, `stable`, and `main`: require pull requests and passing CI; do not push directly to these branches.
+- Use conventional commits: `<type>(<optional-scope>): <imperative summary>`.
+- Create Semantic Versioning tags only from `main`. Do not push, publish, create a pull request, merge, or tag without explicit approval.
+
+Before committing, inspect the diff, stage only task-relevant files, check for secrets and unrelated work, and run the relevant validation. At meaningful checkpoints, report:
+
+```text
+Git Status: in progress | checkpoint committed | GitHub-ready | blocked
+Branch: <branch>
+Commit: <hash and message, if created>
+Verification: <passed, failed, or not-run checks>
+Next: <single concrete next step>
+```
+
+---
+
 ## What seco is
 
 seco is a locally-run, open-source professional identity engine. It ingests professional
