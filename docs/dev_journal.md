@@ -121,3 +121,17 @@
 **Follow-ups:** Create and protect the `dev` and `stable` branches remotely when authorized, then align branch-protection rules with this flow.
 
 ---
+
+### [CP-INTEGRATION] | 2026-09-12: Initialized Remote Delivery Branches
+
+**Summary:** Pushed the release-preparation branch and created remote `dev` and `stable` branches from the current `main` baseline to establish the documented promotion path.
+
+**Files/Modules Affected:** GitHub branch refs; `docs/dev_journal.md`.
+
+**Key Trade-off:** Initialized `dev` and `stable` at `main` rather than advancing them with the working branch, so the prepared changes remain reviewable through the normal working-branch-to-`dev` pull-request stage.
+
+**Evidence:** Git reported the working branch advanced from `d61b8c9d` to `03478a36` and created both `dev` and `stable` successfully.
+
+**Follow-ups:** Configure pull-request and passing-CI protections on `dev`, `stable`, and `main`. The configured GitHub CLI token was invalid, so API-based configuration requires re-authentication or an active authenticated GitHub browser session.
+
+---
