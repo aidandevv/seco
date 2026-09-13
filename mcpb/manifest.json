@@ -3,7 +3,7 @@
   "manifest_version": "0.3",
   "name": "seco",
   "display_name": "seco",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Local-first professional identity engine for reviewed experience capture and Obsidian-ready career memory.",
   "long_description": "seco captures professional experiences through a guided text or voice intake flow, saves reviewed memories locally, and renders them for Obsidian, resumes, LinkedIn, GitHub README, LaTeX, cover letters, and bios. User data stays on the local machine except for BYOK calls to configured model or transcription providers.",
   "author": {

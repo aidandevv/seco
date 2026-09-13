@@ -1,6 +1,6 @@
 {
   "name": "seco-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "mcpName": "io.github.aidandevv/seco",
   "description": "a local professional identity engine with guided review-before-save intake",
   "bin": {

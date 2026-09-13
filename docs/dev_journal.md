@@ -57,6 +57,20 @@
 
 ---
 
+### [CP-TESTING] | 2026-06-21: 1.0.1 Release Gate and MCPB Staging
+
+**Summary:** Bumped release metadata to `1.0.1` and ran the release verification path after the production-readiness changes.
+
+**Files/Modules Affected:** `package.json`, `package-lock.json`, workspace package manifests, `server.json`, `mcpb/manifest.json`.
+
+**Key Trade-off:** The npm release artifact can be verified locally with `release:check`, but final MCPB packing still depends on the external `mcpb` CLI being installed in the release environment.
+
+**Evidence:** `npm run release:check` passed for `1.0.1`, including 100 tests, build, production audit with zero vulnerabilities, dry-run pack, and installed tarball MCP smoke. `npm run release:pack:mcpb` staged `dist/mcpb/seco` successfully with zero production vulnerabilities, then stopped at `sh: mcpb: command not found`.
+
+**Follow-ups:** Install or document the correct `mcpb` CLI in the release environment, rerun `npm run release:pack:mcpb`, then install the generated bundle in Claude Desktop.
+
+---
+
 <!-- SESSION: 2026-06-21 00:00 | agent-skills-garden comparison -->
 
 ### [CP-CONSTRAINT] | 2026-06-21: Journaling Adapter Made Durable in Repo Instructions
